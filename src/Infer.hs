@@ -116,6 +116,8 @@ infer prog = decorate (InferringType prog) do
           nts <- for ctors \case
             Ctor n' t -> do
               t' <- telescope args t
+              ret <- getCtorReturnType t
+              ctorCheckReturnType n args ret
               return [(n', t')]
           return $ (n, k) : concat nts
 
@@ -132,8 +134,14 @@ infer prog = decorate (InferringType prog) do
             return ()
 
           -- No inference on datatypes, they are axioms.
-          Data {} -> do
-            return ()
+          Data n args ctors -> do
+            k   <- telescope args TStar
+            for_ ctors \case
+              Ctor n' t -> do
+                t' <- telescope args t
+                ret <- getCtorReturnType t
+                ctorCheckReturnType n args ret
+                inferKind t'
 
         infer b
 
@@ -263,12 +271,30 @@ prog3 =
 
 prog4 :: Prog
 prog4 =
-  Let (Data "Free" ["f" ::= (TStar `TArr` TStar), "a" ::= TStar]
-    [ Ctor "Pure" $ "a" `TArr` (TApp "Free" "f" `TApp` "a")
-    , Ctor "Join" $ ("f" `TApp` (("Free" `TApp` "f") `TApp` "a")) `TArr` (("Free" `TApp` "f") `TApp` "a")
-    ])
-  $ Let (Data "List" ["a" ::= TStar]
+  LetRec
+    [ Data "Free" ["f" ::= (TStar `TArr` TStar), "a" ::= TStar]
+      [ Ctor "Pure" $ "a" `TArr` (TApp "Free" "f" `TApp` "a")
+      , Ctor "Join" $ ("f" `TApp` (("Free" `TApp` "f") `TApp` "a")) `TArr` (("Free" `TApp` "f") `TApp` "a")
+      ]
+    , Data "List" ["a" ::= TStar]
+      [ Ctor "Nil" $ TApp "List" "a"
+      , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
+      ]
+    ]
+  $ "Join" `App` (("Cons" `App` ("Pure" `App` Lit (I 1))) `App` "Nil")
+
+prog5 :: Prog
+prog5 =
+  Let (Data "List" ["a" ::= TStar]
     [ Ctor "Nil" $ TApp "List" "a"
     , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
     ])
-  $ "Join" `App` (("Cons" `App` ("Pure" `App` Lit (I 1))) `App` "Nil")
+  $ LetRec
+    [ Data "Tree" ["a" ::= TStar]
+      [ Ctor "MkTree" $ "a" `TArr` (TApp "Forest" "a" `TArr` TApp "Tree" "a")
+      ]
+    , Data "Forest" ["a" ::= TStar]
+      [ Ctor "MkForest" $ TApp "List" (TApp "Tree" "a") `TArr` TApp "Forest" "a"
+      ]
+    ]
+  $ "MkForest" `App` (("Cons" `App` (("MkTree" `App` Lit (I 1)) `App` ("MkForest" `App` "Nil"))) `App` "Nil")
