@@ -240,12 +240,12 @@ test prog
 
 prog2 :: Prog
 prog2
-  = Let (Val "id" "tid" $ LAM "A" TStar $ Lam "a" "A" "a")
+  = Let (Val "id" "tid" $ LAM "a" TStar $ Lam "b" "a" "b")
   $ "id" `App` Lit (I 1)
 
 prog1 :: Prog
 prog1
-  = App (Lam "a" (TRec ["a" ::= TConst "Integer", "b" ::= TConst "String"])
+  = App (Lam "a" (TRec ["a" ::= "Integer", "b" ::= "String"])
         $ Get "a" "a")
 
         (Rec
@@ -256,19 +256,19 @@ prog1
 prog3 :: Prog
 prog3 =
   Let (Data "List" ["a" ::= TStar]
-    [ Ctor "Nil" $ TApp (TConst "List") "a"
-    , Ctor "Cons" $ "a" `TArr` (TApp (TConst "List") "a" `TArr` TApp (TConst "List") "a")
+    [ Ctor "Nil" $ TApp "List" "a"
+    , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
     ])
   $ ("Cons" `App` Lit (I 1)) `App` "Nil"
 
 prog4 :: Prog
 prog4 =
   Let (Data "Free" ["f" ::= (TStar `TArr` TStar), "a" ::= TStar]
-    [ Ctor "Pure" $ "a" `TArr` (TApp (TConst "Free") "f" `TApp` "a")
-    , Ctor "Join" $ ("f" `TApp` ((TConst "Free" `TApp` "f") `TApp` "a")) `TArr` ((TConst "Free" `TApp` "f") `TApp` "a")
+    [ Ctor "Pure" $ "a" `TArr` (TApp "Free" "f" `TApp` "a")
+    , Ctor "Join" $ ("f" `TApp` (("Free" `TApp` "f") `TApp` "a")) `TArr` (("Free" `TApp` "f") `TApp` "a")
     ])
   $ Let (Data "List" ["a" ::= TStar]
-    [ Ctor "Nil" $ TApp (TConst "List") "a"
-    , Ctor "Cons" $ "a" `TArr` (TApp (TConst "List") "a" `TArr` TApp (TConst "List") "a")
+    [ Ctor "Nil" $ TApp "List" "a"
+    , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
     ])
   $ "Join" `App` (("Cons" `App` ("Pure" `App` Lit (I 1))) `App` "Nil")

@@ -2,6 +2,7 @@ module Prog where
 
 import Data.Char (isUpper)
 import Data.String (IsString (fromString))
+import Data.Function ((&))
 
 import Pretty
 import Name
@@ -28,8 +29,15 @@ data Prog
   deriving stock (Eq, Ord)
   deriving (Show) via PP Prog
 
-instance IsString Prog where fromString (c : s) = (if isUpper c then Sym else Var) $ fromString $ c : s
-instance IsString Type where fromString = TVar . fromString
+instance IsString Prog where fromString = selectCtor Var Sym
+instance IsString Type where fromString = selectCtor TVar TConst
+
+selectCtor :: (Name -> a) -> (Name -> a) -> String -> a
+selectCtor var sym (c : s)
+  | isUpper c = sym $ fromString (c : s)
+  | otherwise = var $ fromString(c : s)
+selectCtor _ _ _ = error "empty name"
+
 
 data Type
   = TVar   Name
@@ -102,19 +110,38 @@ aBind  = color         yellow
 aField = color (faint  blue)
 aFlag  = color         red
 
+collectArgs :: Prog -> ([Either (Name, Type) (Name, Type)], Prog)
+collectArgs = \case
+  Lam n t b -> do
+    let (args, b') = collectArgs b
+    (Left (n, t) : args, b')
+
+  LAM n k b -> do
+    let (args, b') = collectArgs b
+    (Right (n, k) : args, b')
+
+  other -> ([], other)
+
+ppArg :: Either (Name, Type) (Name, Type) -> Printer
+ppArg = either (paren . ppArg') (bracket' . ppArg')
+  where
+    ppArg' (n, t) = aBind (pp n) |+| punct ":" |+| pp' t
+
 instance Pretty Prog where
   pp = \case
     Var n -> aName (pp n)
     Sym n -> aCtor (pp n)
-    Lam n t b ->
-      par 8 $
-        punct "\\" |.| aBind (pp n) |+| punct ":" |+| pp' t |.| punct "."
-          `indent` pp' b
+    p@Lam {} ->
+      par 8 do
+        collectArgs p & \(args, b) ->
+          kw "fun" |+| seq' (map ppArg args) |+| punct "->"
+            `indent` pp' b
 
-    LAM n k b ->
-      par 8 $
-        punct "/\\" |.| aBind (pp n) |+| punct ":" |+| pp' k |.| punct "."
-          `indent` pp' b
+    p@LAM {} ->
+      par 8 do
+        collectArgs p & \(args, b) ->
+          kw "fun" |+| seq' (map ppArg args) |+| punct "->"
+            `indent` pp' b
 
     App f x ->
       par 7 $ prec 8 (pp f) `indent` prec 7 (pp x)
@@ -143,7 +170,7 @@ instance Pretty Prog where
 instance Pretty Decl where
   pp = \case
     Val n t b ->
-      kw "val" |+| aDecl (pp n) |+| punct ":" |+| pp' t |+| punct "="
+      aDecl (pp n) |+| punct ":" |+| pp' t |+| punct "="
         `indent` pp' b
 
     Capture n -> aDecl (pp n)
@@ -203,3 +230,6 @@ par = makePar (punct "(", punct ")")
 
 paren :: Printer -> Printer
 paren p = punct "(" |.| p |.| punct ")"
+
+bracket' :: Printer -> Printer
+bracket' p = punct "{" |.| p |.| punct "}"
