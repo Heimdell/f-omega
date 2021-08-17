@@ -1,0 +1,72 @@
+entrypoints Prog;
+
+Var.    Prog4 ::= Variable ;
+Sym.    Prog4 ::= Symbol ;
+Lam.    Prog3 ::= "\\"  Variable TypeAnnot "->" Prog ;
+LAM.    Prog3 ::= "/\\" Variable TypeAnnot "->" Prog ;
+App.    Prog2 ::= Prog2     Prog3 ;
+APP.    Prog2 ::= Prog2 "@" Type3 ;
+Match.  Prog3 ::= "case" Prog "of" "{" [Alt] "}";
+Rec.    Prog3 ::= "{" [Decl] "}" ;
+Get.    Prog4 ::= Prog4 "." Variable ;
+LetRec. Prog3 ::= "let" "rec" "{" [Decl] "}" "in" Prog ;
+Let.    Prog3 ::= "let" Decl "in" Prog ;
+Lit.    Prog4 ::= Lit ;
+
+layout "of", "rec", "where" ;
+
+Val.     Decl ::= Variable TypeAnnot "=" Prog ;
+Data.    Decl ::= "data" Symbol [KDecl] "where" "{" [Ctor] "}";
+Capture. Decl ::= Variable ;
+
+KImplicit. KDecl ::= Variable ;
+KDecl.     KDecl ::= "(" Variable ":" Type ")" ;
+
+Ctor. Ctor ::= "|" Symbol ":" Type ;
+
+Alt. Alt ::= "|" Pat "->" Prog ;
+
+HasType.  TypeAnnot ::= ":" Type ;
+Implicit. TypeAnnot ::= ";" ;
+
+PVar.  Pat2 ::= Variable ;
+PCtor. Pat1 ::= Symbol [Pat] ;
+PRec.  Pat2 ::= "{" [PDecl] "}" ;
+PWild. Pat2 ::= "_" ;
+PLit.  Pat2 ::= Lit ;
+
+PBind.    PDecl ::= Variable ":" Type ;
+PCapture. PDecl ::= Variable ;
+
+TVar.   Type3 ::= Variable ;
+TConst. Type3 ::= Symbol ;
+TApp.   Type2 ::= Type2 Type3 ;
+TArr.   Type1 ::= Type2 "->" Type1 ;
+TFun.   Type1 ::= "(" Variable ":" Type ")" "->" Type1 ;
+TStar.  Type3 ::= "*" ;
+TRec.   Type3 ::= "{" [TDecl] "}" ;
+
+coercions  Type 3;
+coercions  Pat  2;
+coercions  Prog 4;
+
+terminator Pat "";
+
+separator  KDecl "" ;
+separator  Alt   ";" ;
+separator  Ctor  ";" ;
+separator  Decl  "," ;
+separator  TDecl "," ;
+separator  PDecl "," ;
+
+ATDecl. TDecl ::= Variable ":" Type ;
+
+I. Lit ::= Integer ;
+S. Lit ::= String ;
+F. Lit ::= Double ;
+X. Lit ::= Ident ;
+
+ACtor. Ctor ::= Symbol ":" Type ;
+
+position token Symbol   (upper (letter | digit | '_')*) ;
+position token Variable (lower (letter | digit | '_')*) ;

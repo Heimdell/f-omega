@@ -1,0 +1,4 @@
+resolver: lts-17.14
+
+extra-deps:
+- polysemy-1.6.0.0
