@@ -44,18 +44,16 @@ infer prog = decorate (InferringType prog) do
         applyBindings $ TArr t tb
 
     App f x -> do
-      -- traceShowM ("infer app", f, x)
-      tf  <- infer f
-      -- traceShowM ("tf", tf)
-      tf' <- instantiate tf
+      tf  <- instantiate =<< infer f
       tx  <- infer x
-      tx'' <- case (tf', tx) of
-        (TArr TFun {} _, TFun {}) -> return tx
-        (_,              TFun {}) -> instantiate tx
-        _                         -> return tx
+      tx' <- case (tf, tx, x) of
+        (TArr TFun {} _, TFun {}, _)      -> return      tx
+        (_,              TFun {}, LAM {}) -> return      tx
+        (_,              TFun {}, _)      -> instantiate tx
+        _                                 -> return      tx
 
       r   <- fresh "r"
-      _   <- unified tf' (TArr tx'' (TVar r))
+      _   <- unified tf (TArr tx' (TVar r))
       applyBindings (TVar r)
 
     LAM n k b -> do
@@ -297,4 +295,4 @@ prog5 =
       [ Ctor "MkForest" $ TApp "List" (TApp "Tree" "a") `TArr` TApp "Forest" "a"
       ]
     ]
-  $ "MkForest" `App` (("Cons" `App` (("MkTree" `App` Lit (I 1)) `App` ("MkForest" `App` "Nil"))) `App` "Nil")
+  $ "MkForest" `App` (("Cons" `App` (("MkTree" `App` LAM "n" TStar (Lam "m" "n" "m")) `App` ("MkForest" `App` "Nil"))) `App` "Nil")

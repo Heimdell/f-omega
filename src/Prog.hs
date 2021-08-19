@@ -159,10 +159,10 @@ instance Pretty Prog where
 
     LetRec ds b ->
       kw "let" |+| aFlag "rec" `indent` block ds
-      `above` kw "in" `indent` pp' b
+      `above` kw "in" `above` pp' b
 
     Let d b ->
-      (kw "let" |+| pp' d |+| kw "in")
+      (kw "let" `indent` pp' d `above` kw "in")
       `above` pp' b
 
     Lit l -> pp l
@@ -191,12 +191,13 @@ instance Pretty Type where
   pp = \case
     TVar   n   -> aName (pp n)
     TConst n   -> aTy   (pp n)
-    TApp   f x -> par 5 (prec 6 (pp f) |+| pp x)
+    TApp   f x -> par 5 (prec 6 (pp f) |+| prec 5 (pp x))
     TArr   d c -> par 7 (pp d |+| aTy "->" |+| prec 8 (pp c))
     TRec   ds  -> record ds
     TFun   n k t ->
-      paren (aName (pp n) |+| punct ":" |+| pp' k)
-        `indent` aTy "->" |+| pp t
+      par 7 do
+        paren (aName (pp n) |+| punct ":" |+| pp' k)
+          `indent` aTy "->" |+| pp t
     TStar -> aCtor "*"
 
 instance Pretty TDecl where
