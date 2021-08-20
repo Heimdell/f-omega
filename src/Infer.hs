@@ -1,6 +1,9 @@
 
 module Infer where
 
+import Control.Applicative (liftA2)
+import Control.Monad (foldM)
+
 import Data.Traversable (for)
 import Data.Foldable (for_)
 
@@ -98,9 +101,7 @@ infer prog = decorate (InferringType prog) do
         other -> do
           die $ ExpectedRecord other
 
-    Lit I {} -> return $ TConst "Integer"
-    Lit F {} -> return $ TConst "Float"
-    Lit S {} -> return $ TConst "String"
+    Lit lit -> return (inferLit lit)
 
     LetRec ds b -> do
       ns <- concat <$> for ds \case
@@ -168,6 +169,74 @@ infer prog = decorate (InferringType prog) do
       withContext ns do
         infer b
 
+    Match subj alts -> do
+      t  <- infer subj
+      ts <- for alts (inferAlt t)
+      r  <- fresh "r"
+      foldM unified (TVar r) ts
+
+inferLit :: Literal -> Type
+inferLit I {} = TConst "Integer"
+inferLit F {} = TConst "Float"
+inferLit S {} = TConst "String"
+
+inferAlt :: (Unifies m, HasContext m) => Type -> Alt -> Sem m Type
+inferAlt t (Alt pat body) = do
+  delta <- match t pat
+  withContext delta do
+    infer body
+
+match :: (Unifies m, HasContext m) => Type -> Pat -> Sem m [(Name, Type)]
+match t = \case
+  PVar n -> return [(n, t)]
+  PWild  -> return []
+  PLit lit -> do
+    unified t (inferLit lit)
+    return []
+
+  PRec pDecls -> do
+    error "no"
+
+oneLayerTypeOfPat :: (Unifies m, HasContext m) => Pat -> Sem m Type
+oneLayerTypeOfPat = \case
+  PVar  n -> TVar <$> fresh "p"
+  PWild   -> TVar <$> fresh "p"
+  PLit  l -> return (inferLit l)
+  PRec pDecls -> do
+    ctx <- for pDecls \case
+      PDecl n _ -> do
+        t <- fresh "t"
+        return $ n ::= TVar t
+
+      PCapture n -> do
+        t <- fresh "t"
+        return $ n ::= TVar t
+
+    return $ TRec ctx
+
+  PCtor n pats -> do
+    cty <- find n
+    mergePats cty pats
+
+  PType ty -> do
+    inferKind ty
+    return TStar
+
+mergePats :: (Unifies m, HasContext m) => Type -> [Pat] -> Sem m Type
+mergePats ty pats = case (ty, pats) of
+  (TFun n k t, PType t' : rest) -> do
+    inferKind t'
+    unified k t'
+    n' <- fresh n
+    mergePats (subst (one n (TVar n)) t) rest
+
+-- Lazy in the monoidal accumulator.
+foldlForM :: forall g b a m. (Foldable g, Monoid b, Applicative m) => g a -> (a -> m b) -> m b
+foldlForM xs f = foldr f' (pure mempty) xs
+  where
+  f' :: a -> m b -> m b
+  f' x y = liftA2 mappend (f x) y
+
 instantiate :: (Unifies m) => Type -> Sem m Type
 instantiate (TFun n k b) = do
   n' <- fresh n
@@ -196,7 +265,6 @@ ctorCheckReturnType tName args checked = go checked (reverse args)
       go f rest
 
     go t _ = die InternalError
-
 
 telescope :: Unifies m => [TDecl] -> Type -> Sem m Type
 telescope args end = applyBindings (foldr go end args)
