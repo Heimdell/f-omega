@@ -41,7 +41,7 @@ selectCtor _ _ _ = error "empty name"
 
 data Type
   = TVar   Name
-  -- | TRigid Name
+  | TRigid Name
   | TConst Name
   | TApp   Type Type
   | TArr   Type Type
@@ -82,7 +82,7 @@ data Pat
 
 data PDecl
   = PDecl    Name Pat
-  | PCapture Name
+  -- | PCapture Name
   deriving stock (Eq, Ord)
   deriving (Show) via PP PDecl
 
@@ -104,6 +104,7 @@ kw     = color (faint  green)
 punct  = color         green
 aCtor  = color (bright magenta)
 aName  = color (faint  yellow)
+aRigid = color (bright red)
 aTy    = color         blue
 aLit   = color (faint  magenta)
 aDecl  = color (bright yellow)
@@ -191,6 +192,7 @@ instance Pretty Alt where
 instance Pretty Type where
   pp = \case
     TVar   n   -> aName (pp n)
+    TRigid n   -> aRigid (pp n)
     TConst n   -> aTy   (pp n)
     TApp   f x -> par 5 (prec 6 (pp f) |+| prec 5 (pp x))
     TArr   d c -> par 7 (pp d |+| aTy "->" |+| prec 8 (pp c))
@@ -219,7 +221,7 @@ instance Pretty Pat where
 instance Pretty PDecl where
   pp = \case
     PDecl    n p -> aDecl (pp n) |+| "=" `indent` pp p
-    PCapture n   -> aBind (pp n)
+    -- PCapture n   -> aBind (pp n)
 
 instance Pretty Literal where
   pp = \case

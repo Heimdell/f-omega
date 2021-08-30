@@ -94,7 +94,7 @@ infer prog = decorate (InferringType prog) do
     Get p n -> do
       infer p >>= \case
         TRec ds -> do
-          case findName n ds of
+          case findTDecl n ds of
             Just t -> applyBindings t
             _      -> die $ ExpectedRecordToHaveField n (TRec ds)
 
@@ -134,9 +134,9 @@ infer prog = decorate (InferringType prog) do
 
           -- No inference on datatypes, they are axioms.
           Data n args ctors -> do
-            k   <- telescope args TStar
+            _ <- telescope args TStar
             for_ ctors \case
-              Ctor n' t -> do
+              Ctor _ t -> do
                 t' <- telescope args t
                 ret <- getCtorReturnType t
                 ctorCheckReturnType n args ret
@@ -156,10 +156,10 @@ infer prog = decorate (InferringType prog) do
           nts <- for ctors \case
             Ctor n' t -> do
               t' <- telescope args t
+              _ <- withContext ((n, k) : [(n'', t'') | n'' ::= t'' <- args]) do
+                inferKind t'
               ret <- getCtorReturnType t
               ctorCheckReturnType n args ret
-              _ <- withContext ((n, k) : [(n, t) | n ::= t <- args]) do
-                inferKind t'
               return [(n', t')]
           return $ (n, k) : concat nts
 
@@ -195,40 +195,46 @@ match t = \case
     return []
 
   PRec pDecls -> do
-    error "no"
+    matchDecls t pDecls
 
-oneLayerTypeOfPat :: (Unifies m, HasContext m) => Pat -> Sem m Type
-oneLayerTypeOfPat = \case
-  PVar  n -> TVar <$> fresh "p"
-  PWild   -> TVar <$> fresh "p"
-  PLit  l -> return (inferLit l)
-  PRec pDecls -> do
-    ctx <- for pDecls \case
-      PDecl n _ -> do
-        t <- fresh "t"
-        return $ n ::= TVar t
+  PCtor cName args -> do
+    t'          <- find cName
+    (ctx, tres) <- untelescope t' args
+    unified t tres
+    return ctx
 
-      PCapture n -> do
-        t <- fresh "t"
-        return $ n ::= TVar t
+  PType t' -> do
+    unified t t'
+    return []
 
-    return $ TRec ctx
+matchDecls :: (Unifies m, HasContext m) => Type -> [PDecl] -> Sem m [(Name, Type)]
+matchDecls (TRec decls) (PDecl n pat : rest) = do
+    case findTDecl n decls of
+      Just t  -> match t pat
+      Nothing -> die $ ExpectedRecordToHaveField n (TRec decls)
+  <>
+    matchDecls (TRec decls) rest
 
-  PCtor n pats -> do
-    cty <- find n
-    mergePats cty pats
+matchDecls TRec {} [] = mempty
+matchDecls t _ = die $ ExpectedRecord t
 
-  PType ty -> do
-    inferKind ty
-    return TStar
+untelescope :: (Unifies m, HasContext m) => Type -> [Pat] -> Sem m ([(Name, Type)], Type)
+untelescope (TFun _ k t) (arg : rest) = do
+  ctx         <- match k arg
+  (ctxs, end) <- untelescope t rest
+  return (ctx <> ctxs, end)
 
-mergePats :: (Unifies m, HasContext m) => Type -> [Pat] -> Sem m Type
-mergePats ty pats = case (ty, pats) of
-  (TFun n k t, PType t' : rest) -> do
-    inferKind t'
-    unified k t'
-    n' <- fresh n
-    mergePats (subst (one n (TVar n)) t) rest
+untelescope (TArr u t) (arg : rest) = do
+  ctx         <- match u arg
+  (ctxs, end) <- untelescope t rest
+  return (ctx <> ctxs, end)
+
+untelescope (TFun _ k _) _ = die $ ExpectedArgOfType k
+untelescope (TArr   u _) _ = die $ ExpectedArgOfType u
+
+untelescope t [] = return ([], t)
+
+untelescope _ args = die $ UnexpectedAdditionaArgs args
 
 -- Lazy in the monoidal accumulator.
 foldlForM :: forall g b a m. (Foldable g, Monoid b, Applicative m) => g a -> (a -> m b) -> m b
@@ -238,7 +244,7 @@ foldlForM xs f = foldr f' (pure mempty) xs
   f' x y = liftA2 mappend (f x) y
 
 instantiate :: (Unifies m) => Type -> Sem m Type
-instantiate (TFun n k b) = do
+instantiate (TFun n _ b) = do
   n' <- fresh n
   instantiate $ subst (one n (TVar n')) b
 
@@ -259,12 +265,12 @@ ctorCheckReturnType tName args checked = go checked (reverse args)
       _ <- unified (TConst tName) t
       return ()
 
-    go t@(TApp f x) (td@(n ::= k) : rest) = decorate (Deconstruct t td) do
+    go t@(TApp f x) (td@(_ ::= k) : rest) = decorate (Deconstruct t td) do
       t' <- inferKind x
       _  <- unified t' k
       go f rest
 
-    go t _ = die InternalError
+    go _ _ = die InternalError
 
 telescope :: Unifies m => [TDecl] -> Type -> Sem m Type
 telescope args end = applyBindings (foldr go end args)
@@ -276,6 +282,7 @@ inferKind ty = decorate (InferringKind ty) do
   -- traceShowM ("inferKind", ty)
   k <- case ty of
     TVar   n -> find n `catch` \(_ :: ContextError) -> (TVar <$> fresh "k")
+    TRigid n -> find n `catch` \(_ :: ContextError) -> (TVar <$> fresh "k")
     TConst n -> find n
     TApp f x -> do
       kf <- inferKind f

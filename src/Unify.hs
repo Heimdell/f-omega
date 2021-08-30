@@ -47,6 +47,8 @@ data UnificationError
   | ExpectedRecord Type
   | ExpectedRecordToHaveField Name Type
   | ExpectedForall Type
+  | UnexpectedAdditionaArgs [Pat]
+  | ExpectedArgOfType Type
   | InternalError
   | While Operation UnificationError
   | Where Context UnificationError
@@ -110,6 +112,12 @@ instance Pretty UnificationError where
         `indent` pp t
       `above` "to be a forall"
 
+    UnexpectedAdditionaArgs pats ->
+      "The pattern arguments" `indent` block pats `above` "are excessive"
+
+    ExpectedArgOfType t -> do
+      "Expecting another pattern argument of type" `indent` pp t
+
     InternalError ->
       "Internal error"
 
@@ -163,7 +171,10 @@ unify (TRec ns) (TRec ms)
 
 unify (TFun n k t) (TFun m l u) = do
   unified k l
-  unified t (subst (one m (TVar n)) u)
+  v <- fresh n
+  let t' = subst (one n (TRigid n)) t
+  let u' = subst (one n (TRigid n)) u
+  unified t' u'
   return ()
 
 unify (TArr k t) (TFun m l u) = do
@@ -185,12 +196,12 @@ zipTDecls :: [TDecl] -> [TDecl] -> Maybe [(Type, Type)]
 zipTDecls ns ms = do
   let names = Set.fromList $ fmap tDeclName (ns ++ ms)
   for (Set.toList names) \name -> do
-    tn <- findName name ns
-    tm <- findName name ms
+    tn <- findTDecl name ns
+    tm <- findTDecl name ms
     return (tn, tm)
 
-findName :: Name -> [TDecl] -> Maybe Type
-findName n decls =
+findTDecl :: Name -> [TDecl] -> Maybe Type
+findTDecl n decls =
   case filter (tDeclHasName n) decls of
     _ ::= u : _ -> return u
     _           -> Nothing
