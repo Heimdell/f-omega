@@ -76,7 +76,7 @@ data Pat
   | PRec [PDecl]
   | PWild
   | PLit Literal
-  | PType Type
+  -- | PType Type
   deriving stock (Eq, Ord)
   deriving (Show) via PP Pat
 

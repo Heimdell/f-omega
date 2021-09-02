@@ -20,38 +20,28 @@ withoutAll :: [Name] -> Subst -> Subst
 withoutAll = flip (foldr without)
 
 class Substitutable a where
-  descent    :: Subst -> (Subst -> Type -> Type) -> a -> a
+  subst    :: Subst -> a -> a
   freeVars :: a -> Set.Set Name
 
 instance Semigroup Subst where
   Subst s <> Subst t = Subst $ s <> Map.map (subst (Subst s)) t
 
-subst :: Substitutable a => Subst -> a -> a
-subst s = descent s \(Subst sEnd) -> \case
-  TVar n | Just t <- Map.lookup n sEnd -> t
-  other                                -> other
-
-substRigid :: Substitutable a => Subst -> a -> a
-substRigid s = descent s \(Subst sEnd) -> \case
-  TRigid n | Just t <- Map.lookup n sEnd -> t
-  other                                  -> other
-
 occurs :: Substitutable a => Name -> a -> Bool
 occurs n t = Set.member n (freeVars t)
 
 instance (Substitutable t, Functor f, Foldable f) => Substitutable (f t) where
-  descent s = fmap . descent s
+  subst = fmap . subst
   freeVars = foldMap freeVars
 
 instance Substitutable Type where
-  descent s r t = case t of
-    TVar   {}  -> r s t
-    TRigid {}  -> r s t
-    TConst {}  -> r s t
-    TApp f x   -> TApp (descent s r f) (descent s r x)
-    TArr d c   -> TArr (descent s r d) (descent s r c)
-    TRec ns    -> TRec (fmap (descent s r) ns)
-    TFun n k t -> TFun n k (descent (without n s) r t)
+  subst s t = case t of
+    TVar   n   -> maybe (TVar n) id $ Map.lookup n (getSubst s)
+    TRigid {}  -> t
+    TConst {}  -> t
+    TApp f x   -> TApp (subst s f) (subst s x)
+    TArr d c   -> TArr (subst s d) (subst s c)
+    TRec ns    -> TRec (fmap (subst s) ns)
+    TFun n k t -> TFun n k (subst (without n s) t)
     TStar      -> TStar
 
   freeVars = \case
@@ -64,27 +54,22 @@ instance Substitutable Type where
     TStar      -> mempty
 
 instance Substitutable TDecl where
-  descent s r (n ::= t) = n ::= descent s r t
+  subst s (n ::= t) = n ::= subst s t
   freeVars (_ ::= t) = freeVars t
 
 instance Substitutable Prog where
-  descent s r = \case
+  subst s = \case
     Var   n     -> Var n
     Sym   n     -> Sym n
-    Lam   n t b -> Lam n (descent s r t) (descent s r b)
-    App   f x   -> App   (descent s r f) (descent s r x)
-    LAM   n t b -> LAM n (descent s r t) (descent (without n s) r b)
-    APP   f t   -> APP   (descent s r f) (descent s r t)
-    Match o as  -> Match (descent s r o) (descent s r as)
-    Rec   ns    -> Rec   (descent s r ns)
-    Get   o n   -> Get   (descent s r o) n
-    LetRec ds b -> do
-      let ns = declNames =<< ds
-      let s' = withoutAll ns s
-      LetRec (descent s' r ds) (descent s' r b)
-
-    Let d b -> do
-      Let (descent s r d) (descent (withoutAll (declNames d) s) r b)
+    Lam   n t b -> Lam n  (subst s t) (subst s b)
+    App   f x   -> App    (subst s f) (subst s x)
+    LAM   n t b -> LAM n  (subst s t) (subst (without n s) b)
+    APP   f t   -> APP    (subst s f) (subst s t)
+    Match o as  -> Match  (subst s o) (subst s as)
+    Rec   ns    -> Rec    (subst s ns)
+    Get   o n   -> Get    (subst s o) n
+    LetRec ds b -> LetRec (subst s ds) (subst s b)
+    Let    d  b -> Let    (subst s d)  (subst s b)
 
     Lit lit -> Lit lit
 
@@ -103,14 +88,14 @@ instance Substitutable Prog where
     Lit    {}    -> mempty
 
 instance Substitutable Alt where
-  descent s r (Alt pat b) = Alt pat (descent s r b)
+  subst s (Alt pat b) = Alt pat (subst s b)
   freeVars (Alt _ b) = freeVars b
 
 instance Substitutable Decl where
-  descent s r = \case
-    Val     n t b         -> Val     n (descent s r t) (descent s r b)
+  subst s = \case
+    Val     n t b         -> Val     n (subst s t) (subst s b)
     Capture n             -> Capture n
-    Data    n targs ctors -> Data    n (descent s r targs) (descent s r ctors)
+    Data    n targs ctors -> Data    n (subst s targs) (subst (withoutAll (map tDeclName targs) s) ctors)
 
   freeVars = \case
     Val     _ t b         -> freeVars t <> freeVars b
@@ -118,5 +103,5 @@ instance Substitutable Decl where
     Data    _ targs ctors -> freeVars targs <> freeVars ctors
 
 instance Substitutable Ctor where
-  descent s r (Ctor n ty) = Ctor n (descent s r ty)
+  subst s (Ctor n ty) = Ctor n (subst s ty)
   freeVars (Ctor _ ty) = freeVars ty

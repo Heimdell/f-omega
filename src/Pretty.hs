@@ -10,6 +10,7 @@ module Pretty
   where
 
 import Control.Monad (liftM2, liftM3)
+import Control.Monad.Free qualified as Free
 
 import qualified Data.Text as Text
 import Data.Text (Text, pack)
@@ -110,6 +111,11 @@ instance {-# OVERLAPPABLE #-} (Pretty a, Pretty1 p, Traversable p) => Pretty (p 
 
 instance Pretty1 [] where
   pp1 = list
+
+instance (Pretty1 f, Traversable f) => Pretty1 (Free.Free f) where
+  pp1 = \case
+    Free.Free f -> pp f
+    Free.Pure d -> pp d
 
 {- | A wrapper to make `Show` instances from `Pretty` ones.
 

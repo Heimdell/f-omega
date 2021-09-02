@@ -203,9 +203,9 @@ match t = \case
     unified t tres
     return ctx
 
-  PType t' -> do
-    unified t t'
-    return []
+  -- PType t' -> do
+  --   unified t t'
+  --   return []
 
 matchDecls :: (Unifies m, HasContext m) => Type -> [PDecl] -> Sem m [(Name, Type)]
 matchDecls (TRec decls) (PDecl n pat : rest) = do

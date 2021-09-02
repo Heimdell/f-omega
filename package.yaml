@@ -1,12 +1,14 @@
 name: fomega2
 dependencies:
   - base
+  - free
   - polysemy
   - mtl
   - containers
   - exceptions
   - pretty
   - parsec
+  - transformers
   - text
 
 default-extensions:
@@ -46,6 +48,7 @@ default-extensions:
   - TypeSynonymInstances
   - UndecidableInstances
   - ViewPatterns
+  - QuantifiedConstraints
   - QuasiQuotes
 
 ghc-options: -Wall -freverse-errors
