@@ -1,4 +1,7 @@
 
+{- | Helpers for producing pretty prints.
+-}
+
 module Color where
 
 type Color = (Int, Int)

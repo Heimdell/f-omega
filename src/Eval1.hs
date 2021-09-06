@@ -1,4 +1,7 @@
 
+{- | Normalisation, used in inference to reduce type expressions.
+-}
+
 module Eval1 (Evals, eval) where
 
 import Control.Monad.Free
@@ -15,11 +18,12 @@ class Evals a where
   eval :: a -> a
 
 instance Evals Prog where
+  -- Anything we can't eval it left as-is.
   eval prog = case prog of
-    Var   n   -> Var n
-    Rigid n   -> Rigid n
-    Lam abstr -> Lam $ eval abstr
-    Pi  abstr -> Pi  $ eval abstr
+    Var   n   -> Var n             -- vars are evaluated to themselves
+    Rigid n   -> Rigid n           -- -"-
+    Lam abstr -> Lam $ eval abstr  -- we perform redunctions for both lambdas
+    Pi  abstr -> Pi  $ eval abstr  -- and pi-types
 
     Star      -> Star
 
@@ -49,6 +53,7 @@ instance Evals Prog where
       eval $ subst s b'
 
     fixpoint@LetRec {} -> do
+      -- They also not evaluated in general yet T_T (but typechecked).
       error $ "fixpoints in normalization-time exressions are not yet supported: " ++ show fixpoint
 
     Lit   l   -> Lit l
@@ -65,14 +70,20 @@ instance Evals (Alt   Prog) where eval (Alt   p b)    = Alt   p (eval b)
 instance Evals (TDecl Prog) where eval (TDecl n t)    = TDecl n (eval t)
 instance Evals (Ctor  Prog) where eval (Ctor  n t)    = Ctor  n (eval t)
 
+-- | Locate a name in a set of declarations.
+--
+--   Produces an "axiom" if name refers to a constructor or datatype.
+--
 find :: Name -> [Decl r Prog] -> Prog
 find n (Val  n' _ p                : _) | n == n' = p
-find n (Data n' _  _               : _) | n == n' = Axiom n' Star
+find n (Data n' tas _              : _) | n == n' = Axiom n' (telescope tas Star)
 find n (Data _  _ (Ctor n' t : _)  : _) | n == n' = Axiom n' t
 find n (Data n' t (_         : cs) : r) | n == n' = find n $ Data n' t cs : r
 find n (_ : rest)                                 = find n rest
 find n []                                         = error $ "find " ++ show n
 
+-- | Pattern match evaluator.
+--
 match :: Prog -> [Alt Prog] -> Prog
 match prog'1 alts = fromMaybe (Match prog'1 alts) $ getFirst $ foldMap (matchOne prog'1) alts
   where

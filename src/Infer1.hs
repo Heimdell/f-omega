@@ -1,4 +1,5 @@
-
+{- | Type inference.
+-}
 module Infer1 where
 
 import Control.Applicative (liftA2)
@@ -24,140 +25,158 @@ import Pretty
 
 import Debug.Trace
 
+-- | Produce a program with some free variables bound and its type.
+--
 inference :: forall m. (Unifies m, HasContext m) => Prog -> Sem m (Prog, Prog)
 inference prog = do
   ty    <- infer prog
   prog' <- applyBindings prog
   return (prog', ty)
 
+-- | The main inference procedure.
+--
 infer :: forall m. (Unifies m, HasContext m) => Prog -> Sem m Prog
-infer prog = fmap eval $ decorate (InferringType prog) do
---  traceShowM ("infer", prog)
- res <- case prog of
-  Var   n -> return $ Var (refresh n)
-  Rigid n -> find n
+infer prog =
+  decorate (InferringType prog) do
+    --  traceShowM ("infer", prog)
+    res <- case prog of
+      Var   n -> return $ Var (refresh n)  -- Free vars are allowed to have any type.
+      Rigid n -> find n                    -- Tound variables should exist in the context.
 
-  Lam (Abstr n t b) -> do
-    _ <- infer t
-    let t' = eval t
-    tb <- withContext [(n, t')] do
-      infer b
-    return $ Pi $ Abstr n t' tb
+      Lam (Abstr n t b) -> do
+        _ <- check t Star                  -- The arguments should have kind `Star`.
+        let t' = eval t                    -- We reduce the type here, after tc;
+                                           -- this way, eval shouldn't fail.
+        tb <- withContext [(n, t')] do     -- We infer body under the binder.
+          infer b
 
-  Pi (Abstr n t b) -> do
-    _ <- infer t
-    let t' = eval t
-    _ <- withContext [(n, t')] do
-      infer b
-    return $ Star
+        return $ Pi $ Abstr n t' tb
 
-  Star -> return $ Star
-
-  App f x -> do
-    infer f >>= \case
       Pi (Abstr n t b) -> do
-        tx <- infer x
-        -- traceShowM ("app", Pi (Abstr n t b), tx)
-        unify t tx
-        -- traceShowM ("b", b)
-        -- traceShowM ("b'", instantiate n tx b)
-        b' <- applyBindings (instantiate n x b)
-        -- traceShowM ("b''", b')
-        return b'
+        _ <- check t Star
+        let t' = eval t
+        _ <- withContext [(n, t')] do
+          infer b
 
-      tf -> do
-        die $ ExpectedForall tf
+        return $ Star
 
-  Match o alts -> do
-    t  <- infer o
-    ts <- for alts $ inferAlt o
-    foldM unified (Var (refresh "r")) ts
+      Star -> return $ Star
 
-  Record ns -> do
-    ds <- for ns \case
-      Val n t b -> do
-        tb <- infer b
-        t' <- unified t tb
-        return $ TDecl n t'
+      App f x -> do
+        -- tf <- infer f
+        -- tx <- infer x
+        -- let r  = refresh "f"
+        -- let n' = refresh "n"
+        -- traceShowM (tf, (Pi (Abstr n' tx (Var r))))
+        -- tf' <- unified tf (Pi (Abstr n' tx (Var r)))
+        -- traceShowM (tf')
+        -- case tf' of
+        --   Pi (Abstr m u c) -> do
+        --     traceShowM (instantiate m x c)
+        --     applyBindings (instantiate m x c)
 
-      Data {} -> error "data in record"
+        --   _ -> error "how?"
+        infer f >>= \case         -- I don't go usual `(?n : tx) -> ?r ~ tf` route
+                                  -- because I can't make it work for a moment.
+                                  -- so we will assume the function is a function here.
+          Pi (Abstr n t b) -> do  -- TODO: fix.
+            tx <- infer x
+            _  <- unified t tx
+            applyBindings (instantiate n x b)
 
-    return $ Product ds
+          tf -> do
+            die $ ExpectedForall tf
 
-  Product ts -> do
-    for_ ts \(TDecl n t) ->
-      check t Star
+      Match o alts -> do
+        t  <- infer o
+        ts <- for alts $ inferAlt o           -- See `inferAlt`.
+        foldM unified (Var (refresh "r")) ts
 
-    return Star
+      Record ns -> do
+        ds <- for ns \case
+          Val n t b -> do
+            tb <- infer b
+            t' <- unified t tb
+            return $ TDecl n t'
 
-  Get p n -> do
-    infer p >>= \case
-      Product ds -> do
-        case findTDecl n ds of
-          Just t -> applyBindings t
-          _      -> die $ ExpectedRecordToHaveField n (Product ds)
+          Data {} -> error "data in record"  -- Because reasons.
 
-      other -> do
-        die $ ExpectedRecord other
+        return $ Product ds
 
-  LetRec ds b -> do
-    ns <- concat <$> for ds \case
-      Val n t _ -> return [(n, eval t)]
+      Product ts -> do
+        for_ ts \(TDecl n t) ->
+          check t Star
 
-      Data n args ctors -> do
-        nts <- for ctors \(Ctor n' t) -> do
-          return [(n', telescope args t)]
+        return Star
 
-        return $ (n, telescope args Star) : concat nts
+      Get p n -> do         -- We assume that object is already a record.
+        infer p >>= \case   -- We don't have constraints, sadly.
+          Product ds -> do
+            case findTDecl n ds of
+              Just t -> applyBindings t
+              _      -> die $ ExpectedRecordToHaveField n (Product ds)
 
-    withContext ns do
-      for_ ds \case
-        Val n _ b' -> do
-          t  <- find n
-          t' <- infer b'
-          unified t t'
-          return ()
+          other -> do
+            die $ ExpectedRecord other
 
-        -- No inference on datatypes, they are axioms.
-        Data n args ctors -> do
-          for_ ctors \case
-            Ctor _ t -> do
-              withContext [(n'', t'') | TDecl n'' t'' <- args] do
-                check (telescope args t) Star
-                ret <- getCtorReturnType t
-                ctorCheckReturnType n args ret
+      LetRec ds b -> do                -- We just dump all stuff into the context,
+        ns <- concat <$> for ds \case  -- it all will be inferred inside it.
+          Val n t _ -> return [(n, t)]
+          Data n args ctors -> do
+            nts <- for ctors \(Ctor n' t) -> return [(n', telescope args t)]
+            return $ (n, telescope args Star) : concat nts
+
+        withContext ns do
+          for_ ds \case
+            Val n _ b' -> do
+              t  <- find n
+              t' <- infer b'
+              unified (eval t) t'
               return ()
 
-      infer b
+            -- No inference on datatypes, they are axioms.
+            Data n args ctors -> do
+              for_ ctors \case
+                Ctor _ t -> do
+                  -- We dump type arguments into the context, because they
+                  -- are /bound/ in the @data@ declaration.
+                  withContext [(n'', t'') | TDecl n'' t'' <- args] do
+                    check (telescope args t) Star  -- check the resulting type
+                    ret <- getCtorReturnType t
+                    ctorCheckReturnType n args ret
+                  return ()
 
-  Let d b -> do
-    ns <- case d of
-      Val n t b' -> do
-        tb <- infer b'
-        t' <- unified (eval t) tb
-        return [(n, t')]
+          infer b
 
-      Data n args ctors -> do
-        let k = telescope args Star
-        nts <- for ctors \case
-          Ctor n' t -> do
-            let t' = telescope args t
-            _ <- withContext ((n, k) : [(n'', t'') | TDecl n'' t'' <- args]) do
-              check t' Star
-              ret <- getCtorReturnType t
-              ctorCheckReturnType n args ret
-            return [(n', t')]
-        return $ (n, k) : concat nts
+      Let d b -> do
+        ns <- case d of
+          Val n t b' -> do             -- We infer types before entering the ctx.
+            tb <- infer b'
+            t' <- unified (eval t) tb
+            return [(n, t')]
 
-    withContext ns do
-      infer b
+          Data n args ctors -> do
+            let k = telescope args Star
+            nts <- for ctors \case
+              Ctor n' t -> do
+                let t' = telescope args t
+                _ <- withContext ((n, k) : [(n'', t'') | TDecl n'' t'' <- args]) do
+                  check t' Star
+                  ret <- getCtorReturnType t
+                  ctorCheckReturnType n args ret
+                return [(n', t')]
+            return $ (n, k) : concat nts
 
-  Lit   lit -> return $ inferLit lit
-  Axiom _ t -> return t
-  FFI   _ t -> return t
---  traceShowM ("inferred", prog, "=>", res)
- return (eval res)
+        withContext ns do
+          infer b
 
+      Lit   lit -> return $ inferLit lit
+      Axiom _ t -> return t
+      FFI   _ t -> return t
+  --  traceShowM ("inferred", prog, "=>", res)
+    return (eval res)
+
+-- | Check that a program infers into given type. Return that type.
 check :: forall m. (Unifies m, HasContext m) => Prog -> Prog -> Sem m Prog
 check p t = do
   t' <- infer p
@@ -170,7 +189,7 @@ inferLit S {} = Rigid "String"
 
 inferAlt :: (Unifies m, HasContext m) => Prog -> Alt Prog -> Sem m Prog
 inferAlt t (Alt pat body) = do
-  delta <- match t pat
+  delta <- match t pat  -- We turn the patten/(object type) into typing context here.
   withContext delta do
     infer body
 
@@ -187,13 +206,9 @@ match t = \case
 
   PCtor cName args -> do
     t'          <- find cName
-    (ctx, tres) <- untelescope t' args
-    unified t tres
-    return ctx
-
-  -- PType t' -> do
-  --   unified t t'
-  --   return []
+    (ctx, tres) <- untelescope t' args  -- We deapply the constructor here.
+    unified t tres                      -- Its formal args are matched with
+    return ctx                          -- its real argument patterns.
 
 matchDecls :: (Unifies m, HasContext m) => Prog -> [PDecl] -> Sem m [(Name, Prog)]
 matchDecls (Product decls) (PDecl n pat : rest) = do
@@ -236,6 +251,8 @@ getCtorReturnType (Pi (Abstr n _ r)) = do
   getCtorReturnType $ subst (Bound n ==> Var (refresh n)) r
 getCtorReturnType other = return other
 
+-- | Check that constructor of `List a` returns `List a`.
+--
 ctorCheckReturnType :: forall m. (Unifies m, HasContext m) => Name -> [TDecl Prog] -> Prog -> Sem m ()
 ctorCheckReturnType tName args checked = go checked (reverse args)
   where
@@ -249,104 +266,4 @@ ctorCheckReturnType tName args checked = go checked (reverse args)
       _  <- unified t' k
       go f rest
 
-    go _ _ = die InternalError
-
--- telescope :: Unifies m => [TDecl] -> Prog -> Sem m Prog
--- telescope args end = applyBindings (foldr go end args)
---   where
---     go (n ::= t) b = TFun n t b
-
--- inferKind :: (Unifies m, HasContext m) => Prog -> Sem m Prog
--- inferKind ty = decorate (InferringKind ty) do
---   -- traceShowM ("inferKind", ty)
---   k <- case ty of
---     TVar   n -> find n `catch` \(_ :: ContextError) -> (TVar <$> fresh "k")
---     TRigid n -> find n `catch` \(_ :: ContextError) -> (TVar <$> fresh "k")
---     TConst n -> find n
---     TApp f x -> do
---       kf <- inferKind f
---       kx <- inferKind x
---       r  <- fresh "r"
---       _  <- unified kf (TArr kx (TVar r))
---       applyBindings (TVar r)
-
---     TArr d c -> do
---       _ <- inferKind d
---       _ <- inferKind c
---       return TStar
-
---     Product ds -> do
---       for ds \(_ ::= t) -> do
---         unified t TStar
---       return TStar
-
---     TFun _ k t -> do
---       _  <- inferKind k
---       kt <- inferKind t
---       applyBindings $ TArr k kt
-
---     TStar -> return TStar
---   -- traceShowM ("inferKind", ty, "=", k)
---   return k
-
--- test :: Prog -> Either ContextError (Either UnificationError HasType)
--- test prog
---   = run
---   $ runContext
---   $ runFresh
---   $ evalUnification
---   $ inference
---   $ prog
-
--- prog2 :: Prog
--- prog2
---   = Let (Val "id" "tid" $ LAM "a" TStar $ Lam "b" "a" "b")
---   $ "id" `App` Lit (I 1)
-
--- prog1 :: Prog
--- prog1
---   = App (Lam "a" (Product ["a" ::= "Integer", "b" ::= "String"])
---         $ Get "a" "a")
-
---         (Rec
---           [ Val "a" "ta" $ Lit (I 1)
---           , Val "b" "tb" $ Lit $ S "2"
---           ])
-
--- prog3 :: Prog
--- prog3 =
---   Let (Data "List" ["a" ::= TStar]
---     [ Ctor "Nil" $ TApp "List" "a"
---     , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
---     ])
---   $ ("Cons" `App` Lit (I 1)) `App` "Nil"
-
--- prog4 :: Prog
--- prog4 =
---   LetRec
---     [ Data "Free" ["f" ::= (TStar `TArr` TStar), "a" ::= TStar]
---       [ Ctor "Pure" $ "a" `TArr` (TApp "Free" "f" `TApp` "a")
---       , Ctor "Join" $ ("f" `TApp` (("Free" `TApp` "f") `TApp` "a")) `TArr` (("Free" `TApp` "f") `TApp` "a")
---       ]
---     , Data "List" ["a" ::= TStar]
---       [ Ctor "Nil" $ TApp "List" "a"
---       , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
---       ]
---     ]
---   $ "Join" `App` (("Cons" `App` ("Pure" `App` Lit (I 1))) `App` "Nil")
-
--- prog5 :: Prog
--- prog5 =
---   Let (Data "List" ["a" ::= TStar]
---     [ Ctor "Nil" $ TApp "List" "a"
---     , Ctor "Cons" $ "a" `TArr` (TApp "List" "a" `TArr` TApp "List" "a")
---     ])
---   $ LetRec
---     [ Data "Tree" ["a" ::= TStar]
---       [ Ctor "MkTree" $ "a" `TArr` (TApp "Forest" "a" `TArr` TApp "Tree" "a")
---       ]
---     , Data "Forest" ["a" ::= TStar]
---       [ Ctor "MkForest" $ TApp "List" (TApp "Tree" "a") `TArr` TApp "Forest" "a"
---       ]
---     ]
---   $ "MkForest" `App` (("Cons" `App` (("MkTree" `App` LAM "n" TStar (Lam "m" "n" "m")) `App` ("MkForest" `App` "Nil"))) `App` "Nil")
+    go _ _ = die InternalError -- TODO: Not just die here, produce a message.

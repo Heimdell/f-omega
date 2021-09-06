@@ -1,9 +1,9 @@
 
-{-let
+let
   data List (a : *) where
     | Nil  : List a
     | Cons : pi (x : a) -> pi (xs : List a) -> List a
-in-}
+in
 
 let
   id = fun (a : *) (x : a) -> x

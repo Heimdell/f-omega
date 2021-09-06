@@ -9,27 +9,29 @@ import Data.Function ((&))
 import Pretty
 import Name
 
+-- | The program is a free monad, because the substitution is just `>>=`.
+--
 type Prog = Free Prog_ Id
 
-data Prog_ self
-  = Lam_     (Abstr self)
-  | App_     self self
+data Prog_ self                         -- we have:
+  = Lam_     (Abstr self)               -- lambdas:      fun (x : t) a b -> a
+  | App_     self self                  -- applications: f x y
 
-  | Pi_      (Abstr self)
-  | Star_
+  | Pi_      (Abstr self)               -- func types:   pi (a : t) -> a -> a
+  | Star_                               -- that thing:   *
 
-  | Match_   self [Alt self]
+  | Match_   self [Alt self]            -- pattern match (no Agda-level tricks)
 
-  | Record_  [Decl 'NonRec self]
-  | Product_ [TDecl self]
-  | Get_     self Name
+  | Record_  [Decl 'NonRec self]        -- records: {a = 1, b = fun (a : b) -> a}
+  | Product_ [TDecl self]               -- their types: #{a : Int, b : Smth}
+  | Get_     self Name                  -- field access: foo.bar.x
 
-  | LetRec_  [Decl 'IsRec  self] self
-  | Let_     (Decl 'NonRec self) self
+  | LetRec_  [Decl 'IsRec  self] self   -- Mutual recursion.
+  | Let_     (Decl 'NonRec self) self   -- let-declarations: let x = a in x
 
-  | Lit_     Literal
-  | Axiom_   Name self
-  | FFI_     Name self
+  | Lit_     Literal                    -- ints, strings and floats
+  | Axiom_   Name self                  -- materialised ctors/types (after eval)
+  | FFI_     Name self                  -- ffi (eval just leaves it applied for now)
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
 
 instance {-# overlaps #-} Show Prog where
@@ -37,8 +39,8 @@ instance {-# overlaps #-} Show Prog where
 
 {-# complete Var, Rigid, Lam, App, Pi, Star, Match, Record, Product, Get, LetRec, Let, Lit, Axiom, FFI #-}
 
-pattern Var     n      = Pure (FreeVar  n)
-pattern Rigid   n      = Pure (Bound    n)
+pattern Var     n      = Pure (FreeVar  n)      -- we also have free vars
+pattern Rigid   n      = Pure (Bound    n)      -- ... and bound ones.
 pattern Lam     a      = Free (Lam_     a)
 pattern App     f x    = Free (App_     f x)
 pattern Pi      a      = Free (Pi_      a)
@@ -53,6 +55,10 @@ pattern Lit     i      = Free (Lit_     i)
 pattern Axiom   n t    = Free (Axiom_   n t)
 pattern FFI     n t    = Free (FFI_     n t)
 
+-- | Append type arguments to a type.
+--
+--   Is used to make type arguments accessible in ctors.
+--
 telescope :: [TDecl Prog] -> Prog -> Prog
 telescope tas b = foldr makePi b tas
   where
@@ -61,37 +67,48 @@ telescope tas b = foldr makePi b tas
 data Id
   = FreeVar  Name
   | Bound    Name
-  -- | Constant Name
   deriving stock (Eq, Ord)
   deriving (Show) via PP Id
 
 instance IsString Id where
   fromString = FreeVar . fromString
 
+-- | The body of Pi-type and lambda.
+--
 data Abstr self = Abstr Name self self
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   -- deriving (Show) via PP (Abstr self)
 
+-- | The field in Product type.
+--
 data TDecl self = TDecl { tDeclName :: Name, tDeclType :: self }
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (TDecl self)
 
+-- | A declaration.
+--
 data Decl (rec :: Rec) self
-  = Val     Name self self
-  | Data    Name [TDecl self] [Ctor self]
+  = Val     Name self self                 -- value
+  | Data    Name [TDecl self] [Ctor self]  -- datatype
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (Decl rec self)
 
-data Rec = IsRec | NonRec
+data Rec = IsRec | NonRec  -- recursion flag
 
+-- | A datatype constructor.
+--
 data Ctor self = Ctor { ctorName :: Name, ctorType :: self }
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (Ctor self)
 
+-- | An alternative for pattern-match.
+--
 data Alt self = Alt Pat self
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (Alt self)
 
+-- | A pattern.
+--
 data Pat
   = PVar  Name
   | PCtor Name [Pat]
@@ -105,6 +122,8 @@ data Pat
 instance IsString Pat where
   fromString = PVar . fromString
 
+-- | A pattern for a field in record.
+--
 data PDecl
   = PDecl { pDeclName :: Name, pDeclBody :: Pat }
   deriving stock (Eq, Ord)
@@ -117,11 +136,7 @@ data Literal
   deriving stock (Eq, Ord)
   deriving (Show) via PP Literal
 
--- declNames :: Decl -> [Name]
--- declNames = \case
---   Val     n _ _  -> [n]
---   Data    n _ cs -> n : fmap ctorName cs
---   Capture _      -> []
+---- Pretty-printer below that line --------------------------------------------
 
 kw, punct, aName, aCtor, aLit, aBind, aDecl, aTy, aField, aFlag :: Printer -> Printer
 kw     = color (faint  green)

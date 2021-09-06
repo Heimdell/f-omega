@@ -1,3 +1,5 @@
+{- | Type unification.
+-}
 
 module Unify1 where
 
@@ -25,33 +27,47 @@ type Unifies m =
   ( Members '[Error Failure, State Subst] m
   )
 
+-- | Run unificator.
+--
 evalUnification
   :: forall m a
   .  Sem (Error Failure : State Subst : m) a
   -> Sem m (Either Failure a)
 evalUnification = evalState mempty . runError
 
+-- | Run unificator and not throw substitutions out.
+--
 runUnification
   :: forall m a
   .  Sem (Error Failure : State Subst : m) a
   -> Sem m (Subst, Either Failure a)
 runUnification = runState mempty . runError
 
+-- | Apply all current knowledge to substitutable term.
+--
 applyBindings :: (Unifies m, Substitutable t) => t -> Sem m t
 applyBindings t = do
   s <- get @Subst
   return (subst s t)
 
+-- | Catch and rethrow a `Failure` with one additional "stack trace" line.
+--
 decorate :: (Unifies m) => Operation -> Sem m a -> Sem m a
 decorate op act = do
   act `catch` (throw . While op)
 
+-- | Throw a message, equip it with current context.
+--
+--   /Does it make sense to apply bindings to error?/
+--
 die :: (Unifies m, HasContext m) => Failure -> Sem m a
 die ue = do
   Context ctx <- ask
   ue' <- applyBindings ue
   throw (Where ctx ue)
 
+-- | Perform unification. Applies bindings before and after.
+--
 unified :: (Unifies m, HasContext m) => Prog -> Prog -> Sem m Prog
 unified n m = decorate (Unifying n m) do
   n' <- applyBindings n
@@ -60,10 +76,16 @@ unified n m = decorate (Unifying n m) do
   applyBindings n'
 
 -- | TODO: Check if in (Bound n ~ FreeVar a) the `a` is above `n` in context.
+--         Uuuuhg, free vars aren't even /in/ the context. Add them, somehow?
+--         Anyways.
 --
 class Unify a where
   unify :: (Unifies m, HasContext m) => a -> a -> Sem m ()
 
+-- | Perform unification over a program.
+--
+--   The unifier expects that the unified term is normalised.
+--
 instance Unify Prog where
   unify (Var n) (Var m)
     | n == m    = mempty
@@ -88,8 +110,8 @@ instance Unify Prog where
   unify (Record ds) (Record gs) = do
     case zipDecls ds gs of
       Just quads -> for_ quads \(tn, tm, n, m) -> do
-        unify tn tm
-        unify  n  m
+        unify tn tm  -- unify inferrent types of fields
+        unify  n  m  -- unify the fields themselves
 
       Nothing -> do
         die $ Mismatch (Record ds) (Record gs)
@@ -103,7 +125,7 @@ instance Unify Prog where
         die $ Mismatch (Product tds) (Product tgs)
 
   unify (Rigid t)   (Rigid u)   | t == u = mempty
-  unify (Lit   l)   (Lit   k)  | l == k = mempty
+  unify (Lit   l)   (Lit   k)   | l == k = mempty
   unify (Axiom n _) (Axiom m _) | n == m = mempty
   unify (FFI   n _) (FFI   m _) | n == m = mempty
 
@@ -121,12 +143,17 @@ instance Unify Prog where
 
   unify a b = die $ Mismatch a b
 
+-- | This needs to be a contructor of `Failure`.
+--
 notNormalisedError :: Prog -> a
 notNormalisedError a = error $ "There term for unification is not normalised: " ++ show (pp a)
 
 instance Unify (Abstr Prog) where
   unify (Abstr n t b) (Abstr m u c) = do
     unify t u
+
+    -- Replace the bound variable in the body of the functional with
+    -- the bound variable of another functional.
     unify b (subst (Bound m ==> Rigid n) c)
 
 zipTDecls :: [TDecl Prog] -> [TDecl Prog] -> Maybe [(Prog, Prog)]

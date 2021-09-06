@@ -1,4 +1,5 @@
-
+{- | The type for all possible errors, equipped with context and "stack trace".
+-}
 module Failure where
 
 import Name
@@ -11,13 +12,13 @@ data Failure
   | Occurs Name Prog
   | ExpectedRecord Prog
   | ExpectedRecordToHaveField Name Prog
-  | ExpectedForall Prog
-  | UnexpectedAdditionaArgs [Pat]
+  | ExpectedForall Prog                  -- TODO: rename into ExpectedPiType
+  | UnexpectedAdditionaArgs [Pat]        -- Why do I check it if `infer` can take care?
   | ExpectedArgOfType Prog
   | NotFound Name
   | InternalError
-  | While Operation Failure
-  | Where [(Name, Prog)] Failure
+  | While Operation Failure       -- "stack trace"
+  | Where [(Name, Prog)] Failure  -- context
   deriving (Show) via PP Failure
 
 data Operation
