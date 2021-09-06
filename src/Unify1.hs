@@ -49,6 +49,7 @@ decorate op act = do
 die :: (Unifies m, HasContext m) => Failure -> Sem m a
 die ue = do
   Context ctx <- ask
+  ue' <- applyBindings ue
   throw (Where ctx ue)
 
 unified :: (Unifies m, HasContext m) => Prog -> Prog -> Sem m Prog

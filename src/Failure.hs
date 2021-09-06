@@ -4,6 +4,7 @@ module Failure where
 import Name
 import Prog1
 import Pretty
+import Subst1
 
 data Failure
   = Mismatch Prog Prog
@@ -24,6 +25,22 @@ data Operation
   | InferringKind Prog
   | Deconstruct Prog (TDecl Prog)
   | Unifying Prog Prog
+
+instance Substitutable Failure where
+  subst s = \case
+    Mismatch l r -> Mismatch (subst s l) (subst s r)
+    Occurs n p   -> Occurs    n          (subst s p)
+    ExpectedRecord p -> ExpectedRecord (subst s p)
+    ExpectedRecordToHaveField n p ->
+      ExpectedRecordToHaveField n (subst s p)
+
+    ExpectedForall p -> ExpectedForall (subst s p)
+    UnexpectedAdditionaArgs pats -> UnexpectedAdditionaArgs pats
+    ExpectedArgOfType p -> ExpectedArgOfType (subst s p)
+    NotFound n -> NotFound n
+    InternalError -> InternalError
+    While op err -> While op (subst s err)
+    Where ctx err -> Where ctx (subst s err)
 
 instance Pretty Operation where
   pp = \case

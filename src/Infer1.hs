@@ -31,19 +31,21 @@ inference prog = do
   return (prog', ty)
 
 infer :: forall m. (Unifies m, HasContext m) => Prog -> Sem m Prog
-infer prog = fmap eval $ decorate (InferringType prog) case prog of
+infer prog = fmap eval $ decorate (InferringType prog) do
+--  traceShowM ("infer", prog)
+ res <- case prog of
   Var   n -> return $ Var (refresh n)
   Rigid n -> find n
 
   Lam (Abstr n t b) -> do
-    _ <- check t Star
+    _ <- infer t
     let t' = eval t
     tb <- withContext [(n, t')] do
       infer b
     return $ Pi $ Abstr n t' tb
 
   Pi (Abstr n t b) -> do
-    _ <- check t Star
+    _ <- infer t
     let t' = eval t
     _ <- withContext [(n, t')] do
       infer b
@@ -52,11 +54,19 @@ infer prog = fmap eval $ decorate (InferringType prog) case prog of
   Star -> return $ Star
 
   App f x -> do
-    tf <- infer f
-    tx <- infer x
-    let r = refresh "r"
-    unify tf $ Pi $ Abstr (refresh "n") tx (Var r)
-    applyBindings (Var r)
+    infer f >>= \case
+      Pi (Abstr n t b) -> do
+        tx <- infer x
+        -- traceShowM ("app", Pi (Abstr n t b), tx)
+        unify t tx
+        -- traceShowM ("b", b)
+        -- traceShowM ("b'", instantiate n tx b)
+        b' <- applyBindings (instantiate n x b)
+        -- traceShowM ("b''", b')
+        return b'
+
+      tf -> do
+        die $ ExpectedForall tf
 
   Match o alts -> do
     t  <- infer o
@@ -145,6 +155,8 @@ infer prog = fmap eval $ decorate (InferringType prog) case prog of
   Lit   lit -> return $ inferLit lit
   Axiom _ t -> return t
   FFI   _ t -> return t
+--  traceShowM ("inferred", prog, "=>", res)
+ return (eval res)
 
 check :: forall m. (Unifies m, HasContext m) => Prog -> Prog -> Sem m Prog
 check p t = do

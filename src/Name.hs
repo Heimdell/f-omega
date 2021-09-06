@@ -14,7 +14,7 @@ data Name = Name String Int
 
 instance Pretty Name where
   pp (Name n 0) = pure (text n)
-  pp (Name n i) = pure (text n) |.| color black ("'" |.| pp i)
+  pp (Name n i) = pure (text n) |.| color black ({-"'" |.|-} pp i)
 
 instance IsString Name where fromString = flip Name 0
 

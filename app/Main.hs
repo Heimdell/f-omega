@@ -16,7 +16,7 @@ main = do
   parseFile parseProg fin >>= \case
     Right prog -> do
       e <- runM $ runContext $ evalUnification $ do
-        (ty, prog') <- inference prog
+        (prog', ty) <- inference prog
         embed do
           putStrLn "---- Inferred ----"
           print prog'
