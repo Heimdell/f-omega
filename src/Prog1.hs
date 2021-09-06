@@ -28,7 +28,7 @@ data Prog_ self
   | Let    (Decl 'NonRec self) self
 
   | Lit    Literal
-  | Axiom  Name
+  | Axiom  Name self
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (Prog_ self)
 
@@ -162,7 +162,7 @@ instance Pretty1 Prog_ where
 
     Lit l -> pp l
 
-    Axiom n -> aCtor ("'" |.| pp n)
+    Axiom n _ -> aCtor ("'" |.| pp n)
 
 instance Pretty1 (Decl r) where
   pp1 = \case

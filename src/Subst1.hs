@@ -5,6 +5,7 @@ import Control.Monad.Free
 
 import Data.Map qualified as Map
 import Data.Set qualified as Set
+import Data.Set (Set)
 import Data.Maybe
 
 import Name
@@ -49,12 +50,19 @@ instantiate name arg = subst (Bound name ==> arg)
 capture :: Name -> Subst
 capture name = FreeVar name ==> Pure (Bound (refresh name))
 
-axiom :: Name -> Subst
-axiom name = Bound name ==> Free (Axiom name)
+axiom :: Name -> Prog -> Subst
+axiom name t = Bound name ==> Free (Axiom name t)
 
 (==>) :: Id -> Prog -> Subst
 var ==> prog = Subst $ Map.singleton var prog
 
+freeVars :: Prog -> Set Name
+freeVars = foldMap \case
+  FreeVar n -> Set.singleton n
+  _         -> mempty
+
+occurs :: Name -> Prog -> Bool
+occurs n p = n `Set.member` freeVars p
 
 -- one :: Name -> Type -> Subst
 -- one n t = Subst $ Map.singleton n t

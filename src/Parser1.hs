@@ -14,6 +14,7 @@ import Prog1
 import Subst1
 import Scope1
 import Pretty qualified
+import Eval1
 
 import Text.Parsec hiding ((<|>), many, State)
 import Text.Parsec.String
@@ -48,10 +49,10 @@ mark s act = do
 --     Left  err  -> print err
 --     Right prog -> print $ Pretty.pp prog
 
-parseFile :: Pretty.Pretty a => Parser a -> String -> IO ()
+parseFile :: (Pretty.Pretty a, Eval1.Evals a) => Parser a -> String -> IO ()
 parseFile p f = do
   t <- readFile f
-  print $ second Pretty.pp $ parse (whiteSpace lexer *> p <* eof) f t
+  print $ second (Pretty.pp . eval) $ parse (whiteSpace lexer *> p <* eof) f t
 
 parseProg :: Parser Prog
 parseProg = mark "prog" parseApp
