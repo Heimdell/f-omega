@@ -15,10 +15,10 @@ abstr name ty body = do
   Abstr (subst s name) ty (subst s body)
 
 lam :: Name -> Prog -> Prog -> Prog
-lam name ty body = Free $ Lam (abstr name ty body)
+lam name ty body = Lam (abstr name ty body)
 
 pi_ :: Name -> Prog -> Prog -> Prog
-pi_ name ty body = Free $ Pi (abstr name ty body)
+pi_ name ty body = Pi (abstr name ty body)
 
 val :: Name -> Prog -> Prog -> (Subst, Decl 'NonRec Prog)
 val name ty body = do
@@ -48,13 +48,13 @@ valRec name ty body = do
 
 let_ :: (Subst, Decl 'NonRec Prog) -> Prog -> Prog
 let_ (s, decl) ctx =
-  Free $ Let decl (subst s ctx)
+  Let decl (subst s ctx)
 
 letRec :: [(Subst, Decl 'IsRec Prog)] -> Prog -> Prog
 letRec pack body = do
   let (ss, decls) = unzip pack
   let s = mconcat ss
-  Free $ LetRec (fmap (substDeclBody s) decls) (subst s body)
+  LetRec (fmap (substDeclBody s) decls) (subst s body)
   where
     substDeclBody :: Subst -> Decl 'IsRec Prog -> Decl 'IsRec Prog
     substDeclBody s = \case
@@ -65,7 +65,7 @@ letRec pack body = do
     substCtorType s (Ctor name ty) = Ctor name (subst s ty)
 
 record :: [(Subst, Decl 'NonRec Prog)] -> Prog
-record = Free . Record . map snd
+record = Record . map snd
 
 alt :: Pat -> Prog -> Alt Prog
 alt pat body = Alt (subst s pat) (subst s body)
@@ -73,13 +73,13 @@ alt pat body = Alt (subst s pat) (subst s body)
     s = patSubst pat
 
 match :: Prog -> [Alt Prog] -> Prog
-match p alts = Free $ Match p alts
+match p alts = Match p alts
 
 star :: Prog
-star = Free Star
+star = Star
 
 access :: Prog -> Name -> Prog
-access p field = Free $ Get p field
+access p field = Get p field
 
 patSubst :: Pat -> Subst
 patSubst = \case

@@ -15,31 +15,32 @@ class Evals a where
   eval :: a -> a
 
 instance Evals Prog where
-  eval (Pure n) = Pure n
-  eval (Free prog) = case prog of
-    Lam abstr -> Free $ Lam $ eval abstr
-    Pi  abstr -> Free $ Pi  $ eval abstr
+  eval prog = case prog of
+    Var   n   -> Var n
+    Rigid n   -> Rigid n
+    Lam abstr -> Lam $ eval abstr
+    Pi  abstr -> Pi  $ eval abstr
 
-    Star      -> Free Star
+    Star      -> Star
 
-    Record decls -> Free $ Record $ map eval decls
+    Record decls -> Record $ map eval decls
 
     App f x -> case (eval f, eval x) of
       -- we don't eval types here, because they were evaluated by type checker
-      (Free (Lam (Abstr n _ body)), x') -> eval $ instantiate n x' body
-      (f', x') -> Free $ App f' x'
+      (Lam (Abstr n _ body), x') -> eval $ instantiate n x' body
+      (f', x') -> App f' x'
 
     Get o field -> case eval o of
-      Free (Record decls) -> find field decls
-      o'                  -> Free $ Get o' field
+      Record decls -> find field decls
+      o'           -> Get o' field
 
     Match o alts -> do
       let o'    = eval o
       let alts' = map eval alts
       match o' alts'
 
-    TRec tDecls -> do
-      Free $ TRec $ map eval tDecls
+    Product tDecls -> do
+      Product $ map eval tDecls
 
     Let val b -> do
       let val' = eval val
@@ -50,8 +51,9 @@ instance Evals Prog where
     fixpoint@LetRec {} -> do
       error $ "fixpoints in normalization-time exressions are not yet supported: " ++ show fixpoint
 
-    Lit   l   -> Free $ Lit l
-    Axiom n t -> Free $ Axiom n t
+    Lit   l   -> Lit l
+    Axiom n t -> Axiom n t
+    FFI   n t -> FFI n t
 
 instance Evals (Decl r Prog) where
   eval = \case
@@ -65,37 +67,37 @@ instance Evals (Ctor  Prog) where eval (Ctor  n t)    = Ctor  n (eval t)
 
 find :: Name -> [Decl r Prog] -> Prog
 find n (Val  n' _ p                : _) | n == n' = p
-find n (Data n' _  _               : _) | n == n' = Free $ Axiom n' (Free Star)
-find n (Data _  _ (Ctor n' t : _)  : _) | n == n' = Free $ Axiom n' t
+find n (Data n' _  _               : _) | n == n' = Axiom n' Star
+find n (Data _  _ (Ctor n' t : _)  : _) | n == n' = Axiom n' t
 find n (Data n' t (_         : cs) : r) | n == n' = find n $ Data n' t cs : r
 find n (_ : rest)                                 = find n rest
 find n []                                         = error $ "find " ++ show n
 
 match :: Prog -> [Alt Prog] -> Prog
-match prog'1 alts = fromMaybe (Free $ Match prog'1 alts) $ getFirst $ foldMap (matchOne prog'1) alts
+match prog'1 alts = fromMaybe (Match prog'1 alts) $ getFirst $ foldMap (matchOne prog'1) alts
   where
     matchOne prog (Alt pat body) = do
       s <- matchPat prog pat
       return $ eval $ subst s body
 
     matchPat prog' pat = case (prog', pat) of
-      (prog,             PVar n)                -> return (Bound n ==> prog)
-      (Free (Axiom n _), PCtor n' []) | n == n' -> return mempty
-      (Free (App   f x), PCtor n' args)
+      (prog,      PVar n)                -> return (Bound n ==> prog)
+      (Axiom n _, PCtor n' []) | n == n' -> return mempty
+      (App   f x, PCtor n' args)
         | px : _ <- reverse args ->
           matchPat f (PCtor n' (init args)) <> matchPat x px
 
-      (Free  Record {},     PRec [])                      -> return mempty
-      (Free (Record decls), PRec (PDecl n pat' : pdecls)) -> do
+      (Record {},    PRec [])                      -> return mempty
+      (Record decls, PRec (PDecl n pat' : pdecls)) -> do
         let p = find n decls
-        matchPat p pat' <> matchPat (Free (Record decls)) (PRec pdecls)
+        matchPat p pat' <> matchPat (Record decls) (PRec pdecls)
 
-      (_,            PWild)             -> return mempty
-      (Free (Lit l), PLit l') | l == l' -> return mempty
+      (_,     PWild)             -> return mempty
+      (Lit l, PLit l') | l == l' -> return mempty
 
       _ -> mempty
 
 asSubst :: Decl 'NonRec Prog -> Subst
 asSubst = \case
-  Val  n _ b     -> Bound n ==> b
-  Data n _ ctors -> axiom n (Free Star) <> mconcat [axiom n' t | Ctor n' t <- ctors]
+  Val  n _   b     -> Bound n ==> b
+  Data n tas ctors -> axiom n (telescope tas Star) <> mconcat [axiom n' t | Ctor n' t <- ctors]

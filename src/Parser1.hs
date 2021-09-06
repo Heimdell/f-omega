@@ -3,8 +3,6 @@ module Parser1 where
 
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Free
-import Control.Monad.Trans.Class
 
 import Data.String
 import Data.Bifunctor
@@ -20,7 +18,7 @@ import Text.Parsec hiding ((<|>), many, State)
 import Text.Parsec.String
 import Text.Parsec.Token
 
-import Debug.Trace
+-- import Debug.Trace
 
 lexer :: Stream s m Char => GenTokenParser s u m
 lexer = makeTokenParser LanguageDef
@@ -38,8 +36,8 @@ lexer = makeTokenParser LanguageDef
   }
 
 mark :: String -> Parser a -> Parser a
-mark s act = do
-  pos <- getPosition
+mark _s act = do
+  _pos <- getPosition
   -- traceShowM (s <> " " <> show pos)
   act
 
@@ -49,10 +47,10 @@ mark s act = do
 --     Left  err  -> print err
 --     Right prog -> print $ Pretty.pp prog
 
-parseFile :: (Pretty.Pretty a, Eval1.Evals a) => Parser a -> String -> IO ()
+parseFile :: (Pretty.Pretty a, Eval1.Evals a) => Parser a -> String -> IO (Either ParseError a)
 parseFile p f = do
   t <- readFile f
-  print $ second (Pretty.pp . eval) $ parse (whiteSpace lexer *> p <* eof) f t
+  return $ parse (whiteSpace lexer *> p <* eof) f t
 
 parseProg :: Parser Prog
 parseProg = mark "prog" parseApp
@@ -60,12 +58,12 @@ parseProg = mark "prog" parseApp
 parseApp :: Parser Prog
 parseApp = mark "app" do
   f : xs <- some parseGet
-  return $ foldl ((Free .) . App) f xs
+  return $ foldl App f xs
 
 parseTerm :: Parser Prog
 parseTerm = mark "term"
   do select
-      [ Pure <$> parseName
+      [ Var <$> parseVar
       , parseFunction
       , parsePi
       , parseMatch
@@ -73,19 +71,19 @@ parseTerm = mark "term"
       , parseLet
       , parseLetRec
       , star <$ reserved lexer "*"
-      , Free . Lit <$> parseLiteral
+      , Lit  <$> parseLiteral
       , parens lexer (parseApp)
-      , Pure (FreeVar (refresh "hole")) <$ reserved lexer "_"
+      , Var (refresh "hole") <$ reserved lexer "_"
       , parseFFI
       ]
 
 parseFFI :: Parser Prog
 parseFFI = do
   reserved lexer "ffi"
-  n <- name
+  n <- parseVar
   reserved lexer ":"
-  t <- prog
-  return $ Free $ FFI n t
+  t <- parseProg
+  return $ FFI n t
 
 parseGet :: Parser Prog
 parseGet = mark "get" do
@@ -116,7 +114,7 @@ parseArg = mark "arg"
       [ parens lexer (pure (,) <*> parseVar <* reserved lexer ":" <*> parseProg)
       , do
         n <- parseVar
-        return (n, Pure $ FreeVar $ refresh "t")
+        return (n, Var $ refresh "t")
       ]
 
 parseLet :: Parser Prog
@@ -150,7 +148,7 @@ parseDecl = mark "decl"
           <*> parseFieldName
           <*> select
             [ reserved lexer ":" *> parseProg
-            , return $ Pure $ FreeVar $ refresh "t"
+            , return $ Var $ refresh "t"
             ]
           <*  reserved lexer "="
           <*> parseProg
@@ -170,7 +168,7 @@ parseNonRecDecl = mark "nrd"
           <*> parseFieldName
           <*> select
             [ reserved lexer ":" *> parseProg
-            , return $ Pure $ FreeVar $ refresh "t"
+            , return $ Var $ refresh "t"
             ]
           <*  reserved lexer "="
           <*> parseProg

@@ -1,4 +1,4 @@
-name: fomega2
+name: limestone
 dependencies:
   - base
   - free
@@ -51,7 +51,17 @@ default-extensions:
   - QuantifiedConstraints
   - QuasiQuotes
 
-ghc-options: -Wall -freverse-errors
+ghc-options: -Wall -freverse-errors -Wno-missing-pattern-synonym-signatures -Wno-orphans
 library:
   source-dirs:
     - src
+
+executables:
+  limestone:
+    main: Main.hs
+
+    source-dirs:
+      - app
+
+    dependencies:
+      - limestone

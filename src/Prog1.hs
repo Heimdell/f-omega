@@ -12,26 +12,51 @@ import Name
 type Prog = Free Prog_ Id
 
 data Prog_ self
-  = Lam    (Abstr self)
-  | App    self self
+  = Lam_     (Abstr self)
+  | App_     self self
 
-  | Pi     (Abstr self)
-  | Star
+  | Pi_      (Abstr self)
+  | Star_
 
-  | Match  self [Alt self]
+  | Match_   self [Alt self]
 
-  | Record [Decl 'NonRec self]
-  | TRec   [TDecl self]
-  | Get    self Name
+  | Record_  [Decl 'NonRec self]
+  | Product_ [TDecl self]
+  | Get_     self Name
 
-  | LetRec [Decl 'IsRec  self] self
-  | Let    (Decl 'NonRec self) self
+  | LetRec_  [Decl 'IsRec  self] self
+  | Let_     (Decl 'NonRec self) self
 
-  | Lit    Literal
-  | Axiom  Name self
-  | FFI    Name self
+  | Lit_     Literal
+  | Axiom_   Name self
+  | FFI_     Name self
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
-  deriving (Show) via PP (Prog_ self)
+
+instance {-# overlaps #-} Show Prog where
+  show = show . pp
+
+{-# complete Var, Rigid, Lam, App, Pi, Star, Match, Record, Product, Get, LetRec, Let, Lit, Axiom, FFI #-}
+
+pattern Var     n      = Pure (FreeVar  n)
+pattern Rigid   n      = Pure (Bound    n)
+pattern Lam     a      = Free (Lam_     a)
+pattern App     f x    = Free (App_     f x)
+pattern Pi      a      = Free (Pi_      a)
+pattern Star           = Free  Star_
+pattern Match   p alts = Free (Match_   p alts)
+pattern Record  ds     = Free (Record_  ds)
+pattern Product ts     = Free (Product_ ts)
+pattern Get     o f    = Free (Get_     o f)
+pattern LetRec  ds b   = Free (LetRec_  ds b)
+pattern Let     d b    = Free (Let_     d b)
+pattern Lit     i      = Free (Lit_     i)
+pattern Axiom   n t    = Free (Axiom_   n t)
+pattern FFI     n t    = Free (FFI_     n t)
+
+telescope :: [TDecl Prog] -> Prog -> Prog
+telescope tas b = foldr makePi b tas
+  where
+    makePi (TDecl n t) b' = Pi $ Abstr n t b'
 
 data Id
   = FreeVar  Name
@@ -113,7 +138,7 @@ aFlag  = color         red
 
 collectArgs :: Prog -> ([Either (Name, Prog) (Name, Prog)], Prog)
 collectArgs = \case
-  Free (Lam (Abstr n t b)) -> do
+  Lam (Abstr n t b) -> do
     let (args, b') = collectArgs b
     (Left (n, t) : args, b')
 
@@ -129,8 +154,11 @@ instance Pretty Id where
     FreeVar n -> aFree (pp n)
     Bound   n -> aName (pp n)
 
-instance Pretty1 Prog_ where
-  pp1 = \case
+instance Pretty Prog where
+  pp = \case
+    Var   n -> aFree (pp n)
+    Rigid n -> aName (pp n)
+
     Lam (Abstr n ty body) ->
       par 8 do
         kw "fun" |+| pp n |+| ":" |+| pp ty |+| punct "->" `indent` pp body
@@ -147,7 +175,7 @@ instance Pretty1 Prog_ where
         `indent` block as
 
     Record ds -> record ds
-    TRec ds -> kw "#" |.| record ds
+    Product ds -> kw "#" |.| record ds
 
     Star -> aCtor "*"
 

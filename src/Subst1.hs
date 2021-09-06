@@ -48,10 +48,10 @@ instantiate :: Name -> Prog -> Prog -> Prog
 instantiate name arg = subst (Bound name ==> arg)
 
 capture :: Name -> Subst
-capture name = FreeVar name ==> Pure (Bound (refresh name))
+capture name = FreeVar name ==> Rigid (refresh name)
 
 axiom :: Name -> Prog -> Subst
-axiom name t = Bound name ==> Free (Axiom name t)
+axiom name t = Bound name ==> Axiom name t
 
 (==>) :: Id -> Prog -> Subst
 var ==> prog = Subst $ Map.singleton var prog
