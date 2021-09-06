@@ -29,6 +29,7 @@ data Prog_ self
 
   | Lit    Literal
   | Axiom  Name self
+  | FFI    Name self
   deriving stock (Eq, Ord, Functor, Foldable, Traversable)
   deriving (Show) via PP (Prog_ self)
 
@@ -163,6 +164,7 @@ instance Pretty1 Prog_ where
     Lit l -> pp l
 
     Axiom n _ -> aCtor ("'" |.| pp n)
+    FFI   n _ -> aCtor ("'" |.| pp n)
 
 instance Pretty1 (Decl r) where
   pp1 = \case

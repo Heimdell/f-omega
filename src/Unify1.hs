@@ -5,7 +5,7 @@ import Control.Monad.Free
 
 import Data.Set qualified as Set
 import Data.Traversable
-import Data.Foldable (for_)
+import Data.Foldable
 
 import Polysemy
 import Polysemy.Error
@@ -154,9 +154,6 @@ instance Unify Prog where
     | occurs n m = die $ Occurs n m
     | otherwise  = modify (FreeVar n ==> m <>)
 
-  unify (Pure (Bound t)) (Pure (Bound u))
-    | t == u = mempty
-
   unify (Free (App a b)) (Free (App c d)) = do
     unify a c
     unify b d
@@ -165,34 +162,44 @@ instance Unify Prog where
   unify (Free (Lam a)) (Free (Lam b)) = unify a b
   unify (Free Star)    (Free Star)    = return ()
 
--- unify (TRec ns) (TRec ms)
---   | Just selection <- zipTDecls ms ns = do
---     for_ selection \(l, r) -> do
---       -- traceShowM (l, r)
---       unified l r
+  unify (Free (Record ds)) (Free (Record gs)) = do
+    case zipDecls ds gs of
+      Just quads -> for_ quads \(tn, tm, n, m) -> do
+        unify tn tm
+        unify  n  m
 
--- unify (TFun n k t) (TFun m l u) = do
---   unified k l
---   v <- fresh n
---   let t' = subst (one n (TRigid n)) t
---   let u' = subst (one n (TRigid n)) u
---   unified t' u'
---   return ()
+      Nothing -> do
+        die $ Mismatch (Free (Record ds)) (Free (Record gs))
 
--- unify (TArr k t) (TFun m l u) = do
---   unified k l
---   n <- fresh "n"
---   unified t (subst (one m (TVar n)) u)
---   return ()
+  unify (Free (TRec tds)) (Free (TRec tgs)) = do
+    case zipTDecls tds tgs of
+      Just pairs -> for_ pairs \(n, m) -> do
+        unify n m
 
--- unify (TFun m l u) (TArr k t) = do
---   unified k l
---   n <- fresh "n"
---   unified t (subst (one m (TVar n)) u)
---   return ()
+      Nothing -> do
+        die $ Mismatch (Free (TRec tds)) (Free (TRec tgs))
 
--- unify TStar TStar = mempty
--- unify n m = die $ Mismatch n m
+  unify (Pure (Bound t))   (Pure (Bound u))   | t == u = mempty
+  unify (Free (Lit   l))   (Free (Lit   k))   | l == k = mempty
+  unify (Free (Axiom n _)) (Free (Axiom m _)) | n == m = mempty
+  unify (Free (FFI   n _)) (Free (FFI   m _)) | n == m = mempty
+
+  unify a@(Free Match {}) _ = notNormalisedError a
+  unify _ a@(Free Match {}) = notNormalisedError a
+
+  unify a@(Free Get {}) _ = notNormalisedError a
+  unify _ a@(Free Get {}) = notNormalisedError a
+
+  unify a@(Free Let {}) _ = notNormalisedError a
+  unify _ a@(Free Let {}) = notNormalisedError a
+
+  unify a@(Free LetRec {}) _ = notNormalisedError a
+  unify _ a@(Free LetRec {}) = notNormalisedError a
+
+  unify a b = die $ Mismatch a b
+
+notNormalisedError :: Prog -> a
+notNormalisedError a = error $ "There term for unification is not normalised: " ++ show (pp a)
 
 instance Unify (Abstr Prog) where
   unify (Abstr n t b) (Abstr m u c) = do
@@ -207,6 +214,14 @@ zipTDecls ns ms = do
     tm <- findTDecl name ms
     return (tn, tm)
 
+zipDecls :: [Decl r Prog] -> [Decl r Prog] -> Maybe [(Prog, Prog, Prog, Prog)]
+zipDecls ns ms = do
+  let names = Set.fromList $ declName =<< (ns ++ ms)
+  for (Set.toList names) \name -> do
+    (tn, n) <- findDecl name ns
+    (tm, m) <- findDecl name ms
+    return (tn, tm, n, m)
+
 findTDecl :: Name -> [TDecl Prog] -> Maybe Prog
 findTDecl n decls =
   case filter (tDeclHasName n) decls of
@@ -215,3 +230,26 @@ findTDecl n decls =
 
 tDeclHasName :: Name -> TDecl Prog -> Bool
 tDeclHasName n (TDecl m _) = n == m
+
+declName :: Decl r Prog -> [Name]
+declName = \case
+  Val  n _ _     -> [n]
+  Data n _ ctors -> n : [n' | Ctor n' _ <- ctors]
+
+findDecl :: Name -> [Decl r Prog] -> Maybe (Prog, Prog)
+findDecl n ((>>= asVals) -> decls) =
+  case filter (\(n', _) -> n == n') decls of
+    ((_, p) : _) -> Just p
+    _            -> Nothing
+
+asVals :: Decl r Prog -> [(Name, (Prog, Prog))]
+asVals = \case
+  Val  n t   b     -> [(n, (t, b))]
+  Data n tas ctors ->
+      (n, (telescope tas (Free Star), Free Star))
+    : [(n', (t, Free Star)) | Ctor n' t <- ctors]
+
+telescope :: [TDecl Prog] -> Prog -> Prog
+telescope tas b = foldr makePi b tas
+  where
+    makePi (TDecl n t) b' = Free $ Pi $ Abstr n t b'

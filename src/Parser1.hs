@@ -32,7 +32,7 @@ lexer = makeTokenParser LanguageDef
   , identLetter     = oneOf $ ['a'.. 'z'] ++ ['A'.. 'Z'] ++ "!~<>#.@$%^&*-+=:;\\/?_" ++ ['0'.. '9']
   , opStart         = empty
   , opLetter        = empty
-  , reservedNames   = words "let rec in case of end _ fun -> @ . : * # ; data where | pi"
+  , reservedNames   = words "let rec in case of end _ fun -> @ . : * # ; data where | pi ffi"
   , reservedOpNames = []
   , caseSensitive   = True
   }
@@ -76,7 +76,16 @@ parseTerm = mark "term"
       , Free . Lit <$> parseLiteral
       , parens lexer (parseApp)
       , Pure (FreeVar (refresh "hole")) <$ reserved lexer "_"
+      , parseFFI
       ]
+
+parseFFI :: Parser Prog
+parseFFI = do
+  reserved lexer "ffi"
+  n <- name
+  reserved lexer ":"
+  t <- prog
+  return $ Free $ FFI n t
 
 parseGet :: Parser Prog
 parseGet = mark "get" do
