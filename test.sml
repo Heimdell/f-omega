@@ -1,11 +1,7 @@
-
 let
-  data List (a : *) where
-    | Nil  : List a
-    | Cons : pi (x : a) -> pi (xs : List a) -> List a
+  x = {a = 1, b = fun a -> a}
 in
-
 let
-  id = fun (a : *) (x : a) -> x
+  show = ffi show : pi (a : Integer) -> String
 in
-  id _ 1
+x.b (show x.a)

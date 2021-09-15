@@ -10,6 +10,8 @@ import Data.Set qualified as Set
 import Data.Set (Set)
 import Data.Maybe
 
+import Polysemy
+
 import Name
 import Pretty
 import Prog1
@@ -75,8 +77,10 @@ instantiate name arg = subst (Bound name ==> arg)
 --   This /will not/ overbound stuff, because in @\a -> \a -> a@ in the @\a -> a@
 --   this function has already made @a@ bound.
 --
-capture :: Name -> Subst
-capture name = FreeVar name ==> Rigid (refresh name)
+capture :: HasFreshNames m => Name -> Sem m Subst
+capture name = do
+  name' <- refresh name
+  return $ FreeVar name ==> Rigid name'
 
 -- | Replaces given bound name with datatype/ctor "value".
 --

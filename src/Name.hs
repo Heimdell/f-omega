@@ -2,9 +2,9 @@
 module Name where
 
 import Data.String
-import Data.IORef
 
-import System.IO.Unsafe
+import Polysemy
+import Polysemy.State
 
 import Pretty
 
@@ -20,17 +20,20 @@ instance Pretty Name where
 
 instance IsString Name where fromString = flip Name 0
 
--- | Nothing to see here.
---
---   TODO: use `TVar`.
---
-counter :: IORef Int
-counter = unsafePerformIO $ newIORef 0
+newtype Fresh = Fresh { getFresh :: Int }
+
+type HasFreshNames (m :: EffectRow) = Members '[State Fresh] m
 
 -- | It /magically/ assigns an unique index to the name.
 --
-refresh :: Name -> Name
-refresh (Name raw _) = unsafePerformIO do
-  modifyIORef counter (+ 1)
-  n <- readIORef counter
+refresh :: HasFreshNames m => Name -> Sem m Name
+refresh (Name raw _) = do
+  modify $ Fresh . (+ 1) . getFresh
+  n <- gets getFresh
   return $ Name raw n
+
+unrefresh :: Name -> Name
+unrefresh (Name raw _) = Name raw 0
+
+runFresh :: Sem (State Fresh : m) a -> Sem m a
+runFresh = evalState (Fresh 0)

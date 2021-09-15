@@ -27,7 +27,7 @@ import Debug.Trace
 
 -- | Produce a program with some free variables bound and its type.
 --
-inference :: forall m. (Unifies m, HasContext m) => Prog -> Sem m (Prog, Prog)
+inference :: forall m. (Unifies m, HasContext m, HasFreshNames m) => Prog -> Sem m (Prog, Prog)
 inference prog = do
   ty    <- infer prog
   prog' <- applyBindings prog
@@ -35,12 +35,12 @@ inference prog = do
 
 -- | The main inference procedure.
 --
-infer :: forall m. (Unifies m, HasContext m) => Prog -> Sem m Prog
+infer :: forall m. (Unifies m, HasContext m, HasFreshNames m) => Prog -> Sem m Prog
 infer prog =
   decorate (InferringType prog) do
     --  traceShowM ("infer", prog)
     res <- case prog of
-      Var   n -> return $ Var (refresh n)  -- Free vars are allowed to have any type.
+      Var   n -> Var <$> refresh n         -- Free vars are allowed to have any type.
       Rigid n -> find n                    -- Tound variables should exist in the context.
 
       Lam (Abstr n t b) -> do
@@ -90,7 +90,8 @@ infer prog =
       Match o alts -> do
         t  <- infer o
         ts <- for alts $ inferAlt o           -- See `inferAlt`.
-        foldM unified (Var (refresh "r")) ts
+        r  <- refresh "r"
+        foldM unified (Var r) ts
 
       Record ns -> do
         ds <- for ns \case
@@ -177,7 +178,7 @@ infer prog =
     return (eval res)
 
 -- | Check that a program infers into given type. Return that type.
-check :: forall m. (Unifies m, HasContext m) => Prog -> Prog -> Sem m Prog
+check :: forall m. (Unifies m, HasContext m, HasFreshNames m) => Prog -> Prog -> Sem m Prog
 check p t = do
   t' <- infer p
   unified t' t
@@ -187,13 +188,13 @@ inferLit I {} = Rigid "Integer"
 inferLit F {} = Rigid "Float"
 inferLit S {} = Rigid "String"
 
-inferAlt :: (Unifies m, HasContext m) => Prog -> Alt Prog -> Sem m Prog
+inferAlt :: (Unifies m, HasContext m, HasFreshNames m) => Prog -> Alt Prog -> Sem m Prog
 inferAlt t (Alt pat body) = do
   delta <- match t pat  -- We turn the patten/(object type) into typing context here.
   withContext delta do
     infer body
 
-match :: (Unifies m, HasContext m) => Prog -> Pat -> Sem m [(Name, Prog)]
+match :: (Unifies m, HasContext m, HasFreshNames m) => Prog -> Pat -> Sem m [(Name, Prog)]
 match t = \case
   PVar n -> return [(n, t)]
   PWild  -> return []
@@ -210,7 +211,7 @@ match t = \case
     unified t tres                      -- Its formal args are matched with
     return ctx                          -- its real argument patterns.
 
-matchDecls :: (Unifies m, HasContext m) => Prog -> [PDecl] -> Sem m [(Name, Prog)]
+matchDecls :: (Unifies m, HasContext m, HasFreshNames m) => Prog -> [PDecl] -> Sem m [(Name, Prog)]
 matchDecls (Product decls) (PDecl n pat : rest) = do
     case findTDecl n decls of
       Just t  -> match t pat
@@ -221,7 +222,7 @@ matchDecls (Product decls) (PDecl n pat : rest) = do
 matchDecls Product {} [] = mempty
 matchDecls t _ = die $ ExpectedRecord t
 
-untelescope :: (Unifies m, HasContext m) => Prog -> [Pat] -> Sem m ([(Name, Prog)], Prog)
+untelescope :: (Unifies m, HasContext m, HasFreshNames m) => Prog -> [Pat] -> Sem m ([(Name, Prog)], Prog)
 untelescope (Pi (Abstr _ k t)) (arg : rest) = do
   ctx         <- match k arg
   (ctxs, end) <- untelescope t rest
@@ -246,14 +247,15 @@ foldlForM xs f = foldr f' (pure mempty) xs
 
 -- instantiate t = return t
 
-getCtorReturnType :: (Unifies m, HasContext m) => Prog -> Sem m Prog
+getCtorReturnType :: (Unifies m, HasContext m, HasFreshNames m) => Prog -> Sem m Prog
 getCtorReturnType (Pi (Abstr n _ r)) = do
-  getCtorReturnType $ subst (Bound n ==> Var (refresh n)) r
+  n' <- refresh n
+  getCtorReturnType $ subst (Bound n ==> Var n') r
 getCtorReturnType other = return other
 
 -- | Check that constructor of `List a` returns `List a`.
 --
-ctorCheckReturnType :: forall m. (Unifies m, HasContext m) => Name -> [TDecl Prog] -> Prog -> Sem m ()
+ctorCheckReturnType :: forall m. (Unifies m, HasContext m, HasFreshNames m) => Name -> [TDecl Prog] -> Prog -> Sem m ()
 ctorCheckReturnType tName args checked = go checked (reverse args)
   where
     go :: Prog -> [TDecl Prog] -> Sem m ()

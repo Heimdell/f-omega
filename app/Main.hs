@@ -8,6 +8,7 @@ import Parser1
 import Eval1
 import Infer1
 import Unify1
+import Name
 import Context1
 
 main :: IO ()
@@ -15,7 +16,7 @@ main = do
   [fin] <- getArgs
   parseFile parseProg fin >>= \case
     Right prog -> do
-      e <- runM $ runContext $ evalUnification $ do
+      e <- runM $ runFresh $ runContext $ evalUnification $ do
         (prog', ty) <- inference prog
         embed do
           putStrLn "---- Inferred ----"

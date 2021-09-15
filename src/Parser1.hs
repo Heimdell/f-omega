@@ -3,9 +3,13 @@ module Parser1 where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans.Class
 
 import Data.String
 import Data.Bifunctor
+
+import Polysemy
+import Polysemy.State
 
 import Name
 import Prog1
@@ -14,26 +18,28 @@ import Scope1
 import Pretty qualified
 import Eval1
 
-import Text.Parsec hiding ((<|>), many, State)
-import Text.Parsec.String
+import Text.Parsec hiding ((<|>), many, State, Parser)
+-- import Text.Parsec.String
 import Text.Parsec.Token
 
 -- import Debug.Trace
 
-lexer :: Stream s m Char => GenTokenParser s u m
+lexer :: GenTokenParser String () (Sem '[State Fresh])
 lexer = makeTokenParser LanguageDef
   { commentStart    = "{-"
   , commentEnd      = "-}"
   , commentLine     = "--"
   , nestedComments  = True
-  , identStart      = oneOf $ ['a'.. 'z'] ++ ['A'.. 'Z'] ++ "!~<>#.@$%^&*-+=:;\\/?_"
-  , identLetter     = oneOf $ ['a'.. 'z'] ++ ['A'.. 'Z'] ++ "!~<>#.@$%^&*-+=:;\\/?_" ++ ['0'.. '9']
-  , opStart         = empty
-  , opLetter        = empty
-  , reservedNames   = words "let rec in case of end _ fun -> @ . : * # ; data where | pi ffi"
-  , reservedOpNames = []
+  , identStart      = oneOf $ ['a'.. 'z'] ++ ['A'.. 'Z'] ++ "!~<>#@$%^&*-+=:;\\/?_"
+  , identLetter     = oneOf $ ['a'.. 'z'] ++ ['A'.. 'Z'] ++ "!~<>#@$%^&*-+=:;\\/?_" ++ ['0'.. '9']
+  , opStart         = oneOf "."
+  , opLetter        = oneOf "."
+  , reservedNames   = words "let rec in case of end _ fun -> @ : * # ; data where | pi ffi"
+  , reservedOpNames = words "."
   , caseSensitive   = True
   }
+
+type Parser = ParsecT String () (Sem '[State Fresh])
 
 mark :: String -> Parser a -> Parser a
 mark _s act = do
@@ -50,7 +56,11 @@ mark _s act = do
 parseFile :: (Pretty.Pretty a, Eval1.Evals a) => Parser a -> String -> IO (Either ParseError a)
 parseFile p f = do
   t <- readFile f
-  return $ parse (whiteSpace lexer *> p <* eof) f t
+  let p' = whiteSpace lexer *> p <* eof
+  return
+    $ run
+    $ evalState (Fresh 0)
+    $ runParserT p' () f t
 
 parseProg :: Parser Prog
 parseProg = mark "prog" parseApp
@@ -68,14 +78,20 @@ parseTerm = mark "term"
       , parsePi
       , parseMatch
       , record <$> braces lexer (parseNonRecDecl `sepBy` comma lexer)
+      , pure Product <* reserved lexer "#" <*> braces lexer (parseTDecl `sepBy` comma lexer)
       , parseLet
       , parseLetRec
       , star <$ reserved lexer "*"
       , Lit  <$> parseLiteral
-      , parens lexer (parseApp)
-      , Var (refresh "hole") <$ reserved lexer "_"
+      , parens lexer parseApp
+      , parseHole
       , parseFFI
       ]
+
+parseHole :: Parser Prog
+parseHole = do
+  var <- lift $ refresh "hole"
+  Var var <$ reserved lexer "_"
 
 parseFFI :: Parser Prog
 parseFFI = do
@@ -89,7 +105,7 @@ parseGet :: Parser Prog
 parseGet = mark "get" do
   t <- parseTerm
   ns <- many do
-    reserved lexer "."
+    reservedOp lexer "."
     parseFieldName
   return $ foldl access t ns
 
@@ -99,14 +115,16 @@ parseFunction = mark "fun" do
   args <- some parseArg
   reserved lexer "->"
   body <- parseProg
-  return (foldr (uncurry lam) body args)
+  foldM lam' body args
+  where
+    lam' b (n, t) = lift $ lam n t b
 
 parsePi :: Parser Prog
 parsePi = mark "pi" do
-  pure (uncurry pi_)
-    <*  reserved lexer "pi"
-    <*> try do typeArg <* reserved lexer "->"
-    <*> parseProg
+  reserved lexer "pi"
+  (n, t) <- try do typeArg <* reserved lexer "->"
+  b      <- parseProg
+  lift $ pi_ n t b
 
 parseArg :: Parser (Name, Prog)
 parseArg = mark "arg"
@@ -114,7 +132,8 @@ parseArg = mark "arg"
       [ parens lexer (pure (,) <*> parseVar <* reserved lexer ":" <*> parseProg)
       , do
         n <- parseVar
-        return (n, Var $ refresh "t")
+        u <- lift $ refresh "u"
+        return (n, Var u)
       ]
 
 parseLet :: Parser Prog
@@ -134,45 +153,41 @@ parseLetRec = mark "let rec" do
     <*  reserved lexer "in"
     <*> parseProg
 
-parseDecl :: Parser (Subst, Decl 'IsRec Prog)
-parseDecl = mark "decl"
+parseAnyDecl
+  :: ( Name
+     -> Prog
+     -> Prog
+     -> Sem '[State Fresh] (Subst, Decl r Prog)
+     )
+  -> Parser (Subst, Decl r Prog)
+parseAnyDecl valDecl = mark "decl"
   do select
-      [ pure data_
-          <*  reserved lexer "data"
-          <*> parseCtor
-          <*> many (parens lexer parseTDecl)
-          <*  reserved lexer "where"
-          <*> many parseCtorDecl
+      [ do
+          reserved lexer "data"
+          n   <- parseCtor
+          tas <- many (parens lexer parseTDecl)
+          reserved lexer "where"
+          cs  <- many parseCtorDecl
+          lift $ data_ n tas cs
 
-      , pure valRec
-          <*> parseFieldName
-          <*> select
+      , do
+          n <- parseFieldName
+          t <- select
             [ reserved lexer ":" *> parseProg
-            , return $ Var $ refresh "t"
+            , do
+                s <- lift $ refresh "s"
+                return $ Var s
             ]
-          <*  reserved lexer "="
-          <*> parseProg
+          reserved lexer "="
+          b <- parseProg
+          lift $ valDecl n t b
       ]
+
+parseDecl :: Parser (Subst, Decl 'IsRec Prog)
+parseDecl = parseAnyDecl valRec
 
 parseNonRecDecl :: Parser (Subst, Decl 'NonRec Prog)
-parseNonRecDecl = mark "nrd"
-  do select
-      [ pure data_
-          <*  reserved lexer "data"
-          <*> parseCtor
-          <*> many (parens lexer parseTDecl)
-          <*  reserved lexer "where"
-          <*> many parseCtorDecl
-
-      , pure val
-          <*> parseFieldName
-          <*> select
-            [ reserved lexer ":" *> parseProg
-            , return $ Var $ refresh "t"
-            ]
-          <*  reserved lexer "="
-          <*> parseProg
-      ]
+parseNonRecDecl = parseAnyDecl val
 
 parseMatch :: Parser Prog
 parseMatch = mark "match" do

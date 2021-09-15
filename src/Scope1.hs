@@ -5,6 +5,8 @@ module Scope1 where
 
 import Control.Monad.Free
 
+import Polysemy
+
 import Subst1
 import Prog1
 import Name
@@ -13,54 +15,55 @@ import Debug.Trace
 
 -- | Abstract a name over body (but no over the type).
 --
-abstr :: Name -> Prog -> Prog -> Abstr Prog
+abstr :: HasFreshNames m => Name -> Prog -> Prog -> Sem m (Abstr Prog)
 abstr name ty body = do
-  let s = capture name
-  Abstr (subst s name) ty (subst s body)
+  s <- capture name
+  return $ Abstr (subst s name) ty (subst s body)
 
 -- | Create a lambda, capture a name.
 --
-lam :: Name -> Prog -> Prog -> Prog
-lam name ty body = Lam (abstr name ty body)
+lam :: HasFreshNames m => Name -> Prog -> Prog -> Sem m Prog
+lam name ty body = Lam <$> abstr name ty body
 
 -- | Create a Pi-type, capture a name.
 --
-pi_ :: Name -> Prog -> Prog -> Prog
-pi_ name ty body = Pi (abstr name ty body)
+pi_ :: HasFreshNames m => Name -> Prog -> Prog -> Sem m Prog
+pi_ name ty body = Pi <$> abstr name ty body
 
 -- | Make a non-recursive value.
 --
-val :: Name -> Prog -> Prog -> (Subst, Decl 'NonRec Prog)
+val :: HasFreshNames m => Name -> Prog -> Prog -> Sem m (Subst, Decl 'NonRec Prog)
 val name ty body = do
-  let s = capture name
-  (s, Val (subst s name) ty (subst s body))
+  s <- capture name
+  return (s, Val (subst s name) ty (subst s body))
 
 -- | Make a datatype.
 --
-data_ :: Name -> [TDecl Prog] -> [Ctor Prog] -> (Subst, Decl r Prog)
+data_ :: HasFreshNames m => Name -> [TDecl Prog] -> [Ctor Prog] -> Sem m (Subst, Decl r Prog)
 data_ name targs ctors = do
-  let s = capture name <> foldMap (capture . tDeclName) targs -- the name and type arguments become bound
-  let (ctorS', ctors') = unzip $ map (ctor s) ctors
-  ( s <> mconcat ctorS'
-   , Data (subst s name) ((fmap.modifyTDeclName) (subst s) targs) ctors' -- capture type args in ctor types
-   )
-  where
-    modifyTDeclName :: (Name -> Name) -> TDecl Prog -> TDecl Prog
-    modifyTDeclName f (TDecl n t) = TDecl (f n) t
+  s <- capture name <> foldMap (capture . tDeclName) targs -- the name and type arguments become bound
+  (ctorS', ctors') <- unzip <$> traverse (ctor s) ctors
+  return
+    ( s <> mconcat ctorS'
+    , Data (subst s name) ((fmap.modifyTDeclName) (subst s) targs) ctors' -- capture type args in ctor types
+    )
+
+modifyTDeclName :: (Name -> Name) -> TDecl Prog -> TDecl Prog
+modifyTDeclName f (TDecl n t) = TDecl (f n) t
 
 -- | Make a constructor.
 --
-ctor :: Subst -> Ctor Prog -> (Subst, Ctor Prog)
+ctor :: HasFreshNames m => Subst -> Ctor Prog -> Sem m (Subst, Ctor Prog)
 ctor s (Ctor name ty) = do
-  let s' = capture name
-  (s', Ctor (subst s' name) (subst s ty))
+  s' <- capture name
+  return (s', Ctor (subst s' name) (subst s ty))
 
 -- | Make a self-referencing value.
 --
-valRec :: Name -> Prog -> Prog -> (Subst, Decl 'IsRec Prog)
+valRec :: HasFreshNames m => Name -> Prog -> Prog -> Sem m (Subst, Decl 'IsRec Prog)
 valRec name ty body = do
-  let s = capture name
-  (s, Val (subst s name) ty (subst s body))
+  s <- capture name
+  return (s, Val (subst s name) ty (subst s body))
 
 -- | Make a let-expression.
 --
@@ -88,14 +91,17 @@ letRec pack body = do
 -- | Make a record.
 --
 record :: [(Subst, Decl 'NonRec Prog)] -> Prog
-record = Record . map snd
+record = Record . map (modifyDeclName unrefresh . snd)
+
+modifyDeclName :: (Name -> Name) -> Decl 'NonRec Prog -> Decl 'NonRec Prog
+modifyDeclName f (Val n t b) = Val (f n) t b
 
 -- | Make an alternative.
 --
-alt :: Pat -> Prog -> Alt Prog
-alt pat body = Alt (subst s pat) (subst s body)
-  where
-    s = patSubst pat
+alt :: HasFreshNames m => Pat -> Prog -> Sem m (Alt Prog)
+alt pat body = do
+  s <- patSubst pat
+  return $ Alt (subst s pat) (subst s body)
 
 -- | Make a pattern match.
 --
@@ -114,7 +120,7 @@ access p field = Get p field
 
 -- | Convert pattern into captures.
 --
-patSubst :: Pat -> Subst
+patSubst :: HasFreshNames m => Pat -> Sem m Subst
 patSubst = \case
   PVar  name   -> capture name
   PCtor _ pats -> foldMap patSubst pats
