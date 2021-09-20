@@ -70,6 +70,14 @@ parseApp = mark "app" do
   f : xs <- some parseGet
   return $ foldl App f xs
 
+parseGet :: Parser Prog
+parseGet = mark "get" do
+  t <- parseTerm
+  ns <- many do
+    reservedOp lexer "."
+    parseFieldName
+  return $ foldl access t ns
+
 parseTerm :: Parser Prog
 parseTerm = mark "term"
   do select
@@ -101,21 +109,13 @@ parseFFI = do
   t <- parseProg
   return $ FFI n t
 
-parseGet :: Parser Prog
-parseGet = mark "get" do
-  t <- parseTerm
-  ns <- many do
-    reservedOp lexer "."
-    parseFieldName
-  return $ foldl access t ns
-
 parseFunction :: Parser Prog
 parseFunction = mark "fun" do
   reserved lexer "fun"
   args <- some parseArg
   reserved lexer "->"
   body <- parseProg
-  foldM lam' body args
+  foldM lam' body (reverse args)
   where
     lam' b (n, t) = lift $ lam n t b
 

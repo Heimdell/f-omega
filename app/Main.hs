@@ -19,6 +19,9 @@ main = do
       e <- runM $ runFresh $ runContext $ evalUnification $ do
         (prog', ty) <- inference prog
         embed do
+          putStrLn "---- Source ----"
+          print prog
+          putStrLn ""
           putStrLn "---- Inferred ----"
           print prog'
           putStrLn ""
